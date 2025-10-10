@@ -3,7 +3,7 @@ const khachHangService = require("../services/khachHang.service");
 
 async function taoKhachHang(req, res) {
     try {
-        const khachHang = await khachHangService.taoKhachHang(req.body);
+        const khachHang = await khachHangService.taoKhachHang(req.body)
         return success(res, khachHang);
     } catch (e) {
         return error(res, e.message);

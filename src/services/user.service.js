@@ -57,7 +57,7 @@ async function loginUser(data) {
         // 3. Tạo JWT token
         const token = jwt.sign(
             { username: user.username, fullname: user.fullname }, // payload
-            process.env.JWT_SECRET || "mysecret", // secret key
+            process.env.JWT_SECRET, // secret key
             { expiresIn: "1d" } // token hết hạn sau 1 ngày
         );
 

@@ -18,9 +18,13 @@ app.use(bodyParser.urlencoded({
 
 const authRoutes = require("./routes/auth.router");
 const khachHangRoutes = require("./routes/khachHang.router");
+const dichVuRoutes = require("./routes/dichVu.router");
+const hopDongRoutes = require("./routes/hopDong.router");
 
 app.use('/auth', authRoutes);
 app.use('/khachHang', khachHangRoutes);
+app.use('/dichVu', dichVuRoutes);
+app.use('/hopDong', hopDongRoutes);
 app.get("/", (req, res) => {
   res.send("API is running...");
 });

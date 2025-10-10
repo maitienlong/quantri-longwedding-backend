@@ -1,6 +1,7 @@
-function success(res, data, code = 200) {
+function success(res, msg, data, code = 200) {
   return res.status(code).json({
     status: "success",
+    message : msg,
     data,
   });
 }
