@@ -25,9 +25,9 @@ async function remove(req, res) {
     }
 }
 
-async function findAll(req, res) {
+async function find(req, res) {
     try {
-        const dichVu = await dichVuService.findAll(req.body, res);
+        const dichVu = await dichVuService.find(req.body, res);
         return success(res, dichVu);
     } catch (e) {
         return error(res, e.message);
@@ -39,5 +39,5 @@ module.exports = {
     create,
     update,
     remove,
-    findAll,
+    find,
 };

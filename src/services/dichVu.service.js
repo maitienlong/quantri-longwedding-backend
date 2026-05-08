@@ -1,14 +1,36 @@
 const DichVu = require("../models/dichVu.model");
 const { success, error } = require("../utils/response");
+const fs = require("fs");
+const path = require("path");
 
 async function create(req, res) {
+    const { imageDichVu } = req;
+    const matches = imageDichVu.match(/^data:(.+);base64,(.+)$/);
+    if (!matches) return error(res, "Invalid base64");
+    const ext = matches[1].split("/")[1];
+    const data = matches[2];
+
+    const uploadDir = path.join(__dirname, "../uploads");
+    if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    const fileName = `longwedding_${Date.now()}.${ext}`;
+    const filePath = path.join(__dirname, "../uploads", fileName);
+    fs.writeFileSync(filePath, Buffer.from(data, "base64"));
+    const imageUrl = `/api/images/${fileName}`;
+
+
     try {
         const dichVu = new DichVu({
             maDichVu: req.maDichVu,
             tenDichVu: req.tenDichVu,
-            soLuong: req.soLuong,
-            donGia: req.donGia,
-            moTa: req.moTa
+            loaiDichVu: req.loaiDichVu,
+            tonKhoDichVu: req.tonKhoDichVu,
+            giaTriDichVu: req.giaTriDichVu,
+            giaChoThueDichVu: req.giaChoThueDichVu,
+            moTaDichVu: req.moTaDichVu,
+            imageDichVu: imageUrl
         });
         await dichVu.save();
         console.log("Đã tạo dịch vụ: " + req.tenDichVu + " thành công !");
@@ -20,11 +42,27 @@ async function create(req, res) {
 
 async function update(req, res) {
     try {
-        const { maDichVu, tenDichVu, soLuong, donGia, moTa } = req;
+        const { maDichVu, tenDichVu, tonKhoDichVu, giaTriDichVu, giaChoThueDichVu, moTaDichVu, imageDichVu } = req;
+
+        const matches = imageDichVu.match(/^data:(.+);base64,(.+)$/);
+        if (!matches) return error(res, "Invalid base64");
+        const ext = matches[1].split("/")[1];
+        const data = matches[2];
+
+        const uploadDir = path.join(__dirname, "../uploads");
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+
+        const fileName = `longwedding_${Date.now()}.${ext}`;
+        const filePath = path.join(__dirname, "../uploads", fileName);
+        fs.writeFileSync(filePath, Buffer.from(data, "base64"));
+        const imageUrl = `/api/images/${fileName}`;
+
 
         const dichVu = await DichVu.updateOne(
             { maDichVu: maDichVu },
-            { $set: { tenDichVu: tenDichVu, soLuong: soLuong, donGia: donGia, moTa: moTa } },
+            { $set: { tenDichVu: tenDichVu, tonKhoDichVu: tonKhoDichVu, giaDichVu: giaDichVu, giaThueDichVu: giaThueDichVu, moTaDichVu: moTaDichVu, imageDichVu: imageUrl } },
             { new: true } // trả về document sau khi cập nhật
         );
 
@@ -56,15 +94,14 @@ async function remove(req, res) {
     }
 }
 
-async function findAll(req, res) {
+async function find(req, res) {
     try {
         const dichVu = await DichVu.find();
-        return {
-            success: true, data: {
-                count: dichVu.length,
-                dichVu
-            }
-        };
+        return success(res, "Tải danh sách dịch vụ thành công", {
+            count: dichVu.length,
+            dichVu
+        })
+
     } catch (err) {
         return error(res, err.message);
     }
@@ -75,5 +112,5 @@ module.exports = {
     create,
     update,
     remove,
-    findAll
+    find
 };

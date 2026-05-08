@@ -12,7 +12,7 @@ async function createUser(req, res) {
 
 async function loginUser(req, res) {
    try { 
-        const user = await userService.loginUser(req.body);
+        const user = await userService.loginUser(res, req.body);
         return success(res, user);
     } catch (e) {
         return error(res, e.message);

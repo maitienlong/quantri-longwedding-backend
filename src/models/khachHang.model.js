@@ -1,13 +1,14 @@
 const mongoose = require("mongoose");
 
 const khachHangSchema = new mongoose.Schema({
-    maKhachHang: { type: String, required: true, unique: true },
     tenKhachHang: { type: String, required: true },
-    maDangNhap: { type: String, required: true },
-    ngaySinhNhat: { type: String, required: true },
-    gioiTinh: { type: String, required: true },
+    soDienThoai: { type: String, required: true, unique: true },
+    avatar: { type: String },
+    maDangNhap: { type: String },
+    ngaySinhNhat: { type: String },
+    gioiTinh: { type: String },
     diaChi: { type: String, required: true },
-    ngayCapCCCD: { type: String, required: true },
+    ngayCapCCCD: { type: String },
 }, { timestamps: true });
 
 

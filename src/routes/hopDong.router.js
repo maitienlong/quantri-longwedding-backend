@@ -1,18 +1,12 @@
 const express = require("express");
 const router = express.Router();
-const HopDongController = require("../controllers/hopDong.controller");
+const hopDongService = require("../services/hopDong.service.js");
 const authMiddleware = require("../middleware/auth.middleware");
 
-router.post("/taoMoiHopDongCuoi", authMiddleware, HopDongController.taoHDCuoi);
-router.post("/capNhatHopDongCuoi", authMiddleware, HopDongController.capNhatHDCuoi);
-router.post("/thanhToanHopDongCuoi", authMiddleware, HopDongController.thanhToanHDCuoi);
-router.post("/xoaHDCuoi", authMiddleware, HopDongController.xoaHDCUoi);
-router.post("/findAllHDCuoi", authMiddleware, HopDongController.findAllHDCuoi);
-
-router.post("/taoMoiHopDong", authMiddleware, HopDongController.taoHD);
-router.post("/capNhatHopDong", authMiddleware, HopDongController.capNhatHD);
-router.post("/thanhToanHopDong", authMiddleware, HopDongController.thanhToanHD);
-router.post("/xoaHopDong", authMiddleware, HopDongController.xoaHD);
-router.post("/findAllHD", authMiddleware, HopDongController.findAllHD);
+router.post("/create", authMiddleware, hopDongService.create);
+router.post("/update", authMiddleware, hopDongService.update);
+router.post("/pay", authMiddleware, hopDongService.pay);
+router.post("/remove", authMiddleware, hopDongService.remove);
+router.post("/list", authMiddleware, hopDongService.list);
 
 module.exports = router;

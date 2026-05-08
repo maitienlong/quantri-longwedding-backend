@@ -1,9 +1,7 @@
 const User = require("../models/user.model");
 const jwt = require("jsonwebtoken");
+const { success, error } = require("../utils/response");
 
-async function getAllUsers() {
-    return await User.find();
-}
 
 async function createUser(data) {
     try {
@@ -17,41 +15,25 @@ async function createUser(data) {
             }
         };
     } catch (err) {
-        return { success: false, error: err.message };
+       return error(res, "Tạo user thất bại !" + err.message);
     }
 }
 
-async function loginUser(data) {
+async function loginUser(res, data) {
     const { username, password } = data;
 
     try {
         // 1. Kiểm tra email có tồn tại
         const user = await User.findOne({ username });
         if (!user) {
-            return {
-                success: false,
-                data: {
-                    message: "Tài khoản không tồn tại",
-                    token: null,
-                    username: null,
-                    fullname: null,
-                }
-            };
+            return error(res, "Tài khoản không tồn tại!")
         }
 
         // 2. So sánh mật khẩu
         const isMatch = await user.comparePassword(password);
         if (!isMatch) {
 
-            return {
-                success: false,
-                data: {
-                    message: "Mật khẩu không đúng",
-                    token: null,
-                    username: null,
-                    fullname: null,
-                }
-            };
+            return error(res, "Mật khẩu không đúng!")
         }
 
         // 3. Tạo JWT token
@@ -61,32 +43,22 @@ async function loginUser(data) {
             { expiresIn: "1d" } // token hết hạn sau 1 ngày
         );
 
-        return {
-            success: true,
-            data: {
-                message: "Đăng nhập thành công",
-                token: token,
-                username: user.username,
-                fullname: user.fullname,
-            }
-        };
+        return success(res, "Đăng nhập thành công!", {
+            token: token,
+            username: user.username,
+            fullname: user.fullname,
+            birthday: user.birthday,
+            positon: user.positon,
+            permission: user.permission
+        });
 
     } catch (err) {
-        return {
-            success: true,
-            data: {
-                message: err.message,
-                token: null,
-                username: null,
-                fullname: null,
-            }
-        };
+        return error(res, "Đăng nhập thất bại: " + err.message);
     }
 }
 
 
 module.exports = {
-    getAllUsers,
     loginUser,
     createUser,
 };
