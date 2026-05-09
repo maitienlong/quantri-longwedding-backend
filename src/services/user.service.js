@@ -3,7 +3,8 @@ const jwt = require("jsonwebtoken");
 const { success, error } = require("../utils/response");
 
 
-async function createUser(data) {
+async function createUser(req, res) {
+    const data = req.body;
     try {
         const user = new User({ username: data.username, password: data.password, fullname: data.fullname, birthday: data.birthday, positon: data.positon, permission: data.permission });
         await user.save();
@@ -19,7 +20,8 @@ async function createUser(data) {
     }
 }
 
-async function loginUser(res, data) {
+async function loginUser(req, res) {
+    const data = req.body;
     const { username, password } = data;
 
     try {

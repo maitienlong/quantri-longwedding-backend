@@ -1,11 +1,11 @@
 const express = require("express");
 const router = express.Router();
-const DichVuController = require("../controllers/dichVu.controller");
+const dichVuService = require("../services/dichVu.service");
 const authMiddleware = require("../middleware/auth.middleware");
 
-router.post("/create", authMiddleware, DichVuController.create);
-router.post("/update", authMiddleware, DichVuController.update);
-router.post("/remove", authMiddleware, DichVuController.remove);
-router.post("/findAll", authMiddleware, DichVuController.find);
+router.post("/create", authMiddleware, dichVuService.create);
+router.post("/update", authMiddleware, dichVuService.update);
+router.post("/remove", authMiddleware, dichVuService.remove);
+router.post("/findAll", authMiddleware, dichVuService.find);
 
 module.exports = router;
