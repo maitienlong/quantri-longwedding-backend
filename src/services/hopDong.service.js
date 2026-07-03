@@ -86,30 +86,30 @@ async function list(req, res) {
         const now = new Date();
 
         if (filter) {
-             let startDate = new Date(now);
-             startDate.setHours(0, 0, 0, 0);
+            let startDate = new Date(now);
+            startDate.setHours(0, 0, 0, 0);
 
-             switch (filter) {
-                 case 'today': break;
-                 case 'week':
-                     const day = startDate.getDay();
-                     const diff = startDate.getDate() - day + (day === 0 ? -6 : 1);
-                     startDate.setDate(diff);
-                     break;
-                 case 'month':
-                     startDate.setDate(1);
-                     break;
-                 case 'year':
-                     startDate.setMonth(0, 1);
-                     break;
-                 default:
-                     startDate = null;
-             }
+            switch (filter) {
+                case 'today': break;
+                case 'week':
+                    const day = startDate.getDay();
+                    const diff = startDate.getDate() - day + (day === 0 ? -6 : 1);
+                    startDate.setDate(diff);
+                    break;
+                case 'month':
+                    startDate.setDate(1);
+                    break;
+                case 'year':
+                    startDate.setMonth(0, 1);
+                    break;
+                default:
+                    startDate = null;
+            }
 
-             if (startDate) {
-                 query.ngayHopDong = { $gte: startDate };
-             }
-         }
+            if (startDate) {
+                query.ngayHopDong = { $gte: startDate };
+            }
+        }
 
         // ==========================================
         // SỬ DỤNG .POPULATE() ĐỂ LẤY THÔNG TIN
@@ -128,7 +128,7 @@ async function list(req, res) {
             //     path: 'gioHang.dichVu',
             //     select: 'tenDichVu'
             // })
-            .sort({ ngayHopDong: -1 }); 
+            .sort({ ngayHopDong: -1 });
 
         return success(res, "Tải dữ liệu thành công !", {
             filter: filter || "all",
