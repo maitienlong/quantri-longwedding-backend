@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 
 async function create(req, res) {
-    const { imageDichVu } = req;
+    const { imageDichVu } = req.body;
     const matches = imageDichVu.match(/^data:(.+);base64,(.+)$/);
     if (!matches) return error(res, "Invalid base64");
     const ext = matches[1].split("/")[1];
@@ -23,13 +23,13 @@ async function create(req, res) {
 
     try {
         const dichVu = new DichVu({
-            maDichVu: req.maDichVu,
-            tenDichVu: req.tenDichVu,
-            loaiDichVu: req.loaiDichVu,
-            tonKhoDichVu: req.tonKhoDichVu,
-            giaTriDichVu: req.giaTriDichVu,
-            giaChoThueDichVu: req.giaChoThueDichVu,
-            moTaDichVu: req.moTaDichVu,
+            maDichVu: req.body.maDichVu,
+            tenDichVu: req.body.tenDichVu,
+            loaiDichVu: req.body.loaiDichVu,
+            tonKhoDichVu: req.body.tonKhoDichVu,
+            giaTriDichVu: req.body.giaTriDichVu,
+            giaChoThueDichVu: req.body.giaChoThueDichVu,
+            moTaDichVu: req.body.moTaDichVu,
             imageDichVu: imageUrl
         });
         await dichVu.save();

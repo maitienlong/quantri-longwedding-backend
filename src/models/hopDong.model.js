@@ -15,9 +15,17 @@ const cartItemSchema = new mongoose.Schema({
   thanhTien: { type: Number }
 });
 
+const toDate = (v) => {
+  if (!v) return v;
+  if (typeof v === 'number') {
+    return new Date(v < 10000000000 ? v * 1000 : v);
+  }
+  return v;
+};
+
 const hopDongSchema = new mongoose.Schema({
   maHopDong: { type: String, required: true, unique: true },
-  ngayHopDong: { type: Date, required: true },
+  ngayHopDong: { type: Date, required: true, set: toDate },
 
   khachHang1: {
     type: mongoose.Schema.Types.ObjectId,
@@ -32,7 +40,10 @@ const hopDongSchema = new mongoose.Schema({
   gioHang: [cartItemSchema],
   thanhToan: {
     tongGiaTri: { type: Number },
-    voucherGiamGia: { type: Number },
+    giamGia: { type: Number },
+    loaiGiamGia: { type: Number }, // 0: tiền mặt, 1: phần trăm
+    tongGiaTriSauGiam: { type: Number },
+    khachHangDaThanhToan: { type: Number },
     cacLuotThanhToan: [payment.schema]
   },
   cacNgay: {
@@ -58,50 +69,58 @@ const hopDongSchema = new mongoose.Schema({
 });
 
 // ==========================================
-// ĐÂY LÀ KHU VỰC TRIỂN KHAI MIDDLEWARE
+// MIDDLEWARE XỬ LÝ LOGIC TÍNH TOÁN
 // ==========================================
 hopDongSchema.pre('save', async function (next) {
   let tongChuaGiam = 0;
 
   try {
-    // 1. Duyệt qua giỏ hàng để lấy giá gốc và tính toán
+    // 1. Duyệt giỏ hàng để lấy giá và tính tổng
     if (this.gioHang && this.gioHang.length > 0) {
-      // Dùng for...of thay vì forEach để có thể dùng await bên trong vòng lặp
       for (let item of this.gioHang) {
-
-        // KIỂM TRA & SAO CHÉP ĐƠN GIÁ (SNAPSHOT)
-        // Nếu item chưa có donGia hoặc bạn muốn ghi đè giá mới nhất
+        // Lấy đơn giá từ DB nếu chưa có (Snapshot)
         if (!item.donGia) {
-          // Tìm thông tin dịch vụ gốc dựa vào ObjectId
           const dichVuGoc = await DICHVU.findById(item.dichVu);
           if (!dichVuGoc) {
             throw new Error(`Không tìm thấy dịch vụ với ID: ${item.dichVu}`);
           }
-
-          // Sao chép đơn giá và tên từ bảng dịch vụ sang giỏ hàng
-          item.donGia = dichVuGoc.giaTriDichVu; // Thay "giaGoc" bằng trường giá tương ứng trong dichVu.model.js của bạn
-          item.tenDichVuSnapshot = dichVuGoc.tenDichVu; // Thêm luôn tên dịch vụ nếu bạn có trường này[cite: 4]
+          item.donGia = dichVuGoc.giaTriDichVu;
+          item.tenDichVuSnapshot = dichVuGoc.tenDichVu;
         }
 
-        // Tính toán thanhTien
+        // Tính thanhTien từng item
         const soLuong = Number(item.soLuong) || 0;
         const donGia = Number(item.donGia) || 0;
-
         item.thanhTien = soLuong * donGia;
+        
         tongChuaGiam += item.thanhTien;
       }
     }
 
-    // 2. Tính tổng giá trị hợp đồng
-    if (!this.thanhToan) {
-      this.thanhToan = {};
-    }
-    const giamGia = Number(this.thanhToan.voucherGiamGia) || 0;
-    this.thanhToan.tongGiaTri = Math.max(0, tongChuaGiam - giamGia);
+    // Gán tổng giá trị gốc
+    this.thanhToan.tongGiaTri = tongChuaGiam;
 
-    next(); // Hoàn tất
+    // 2. Logic Giảm Giá
+    const giamGiaValue = Number(this.thanhToan.giamGia) || 0;
+    const loaiGiamGia = this.thanhToan.loaiGiamGia; // 0: Tiền mặt, 1: %
+
+    let soTienDuocGiam = 0;
+
+    if (loaiGiamGia === 1) {
+      // Giảm theo %
+      soTienDuocGiam = (tongChuaGiam * giamGiaValue) / 100;
+    } else {
+      // Giảm theo tiền mặt (loại 0 hoặc mặc định)
+      soTienDuocGiam = giamGiaValue;
+    }
+
+    // 3. Tính tổng giá trị sau khi giảm
+    const ketQua = tongChuaGiam - soTienDuocGiam;
+    this.thanhToan.tongGiaTriSauGiam = Math.max(0, ketQua); // Đảm bảo không âm
+
+    next();
   } catch (error) {
-    next(error); // Báo lỗi cho Mongoose nếu có vấn đề (VD: không tìm thấy dịch vụ)
+    next(error);
   }
 });
 
