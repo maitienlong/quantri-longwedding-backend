@@ -111,7 +111,7 @@ async function create(req, res) {
 
 async function update(req, res) {
     try {
-        const { maHopDong, gioHang, thanhToan, nguoiPhucVu, giaiDoan, cacNgay } = req.body;
+        const { maHopDong, gioHang, thanhToan, nguoiPhucVu, giaiDoan, cacNgay, linkAnhGoc, linkAnhChinhSua } = req.body;
         const hopDong = await HopDong.findOne({ maHopDong });
         if (!hopDong) return error(res, "Không tìm thấy hợp đồng");
 
@@ -119,6 +119,8 @@ async function update(req, res) {
         if (cacNgay !== undefined) hopDong.cacNgay = cacNgay;
         if (nguoiPhucVu !== undefined) hopDong.nguoiPhucVu = nguoiPhucVu;
         if (giaiDoan !== undefined) hopDong.giaiDoan = giaiDoan;
+        if (linkAnhGoc !== undefined) hopDong.linkAnhGoc = linkAnhGoc;
+        if (linkAnhChinhSua !== undefined) hopDong.linkAnhChinhSua = linkAnhChinhSua;
 
         if (thanhToan !== undefined) {
             hopDong.thanhToan = thanhToan;
@@ -244,19 +246,113 @@ function getICTStartDateForFilter(filter) {
     }
 }
 
+function getICTDateRange(period) {
+    if (!period) return null;
+    const startOfToday = getICTStartOfDay();
+    
+    let start, end;
+    switch (period) {
+        case 'today':
+        case 'hôm nay': {
+            start = startOfToday;
+            end = new Date(startOfToday);
+            end.setDate(end.getDate() + 1);
+            break;
+        }
+        case 'week':
+        case 'this_week':
+        case 'tuần':
+        case 'tuần này': {
+            const now = new Date();
+            const tzOffset = 7 * 60;
+            const localTime = now.getTime() + (now.getTimezoneOffset() * 60000) + (tzOffset * 60000);
+            const ictDate = new Date(localTime);
+            const day = ictDate.getDay();
+            const diffToMonday = ictDate.getDate() - (day === 0 ? 6 : day - 1);
+            
+            const startOfWeek = new Date(Date.UTC(
+                ictDate.getFullYear(),
+                ictDate.getMonth(),
+                diffToMonday,
+                0, 0, 0, 0
+            ));
+            startOfWeek.setHours(startOfWeek.getHours() - 7);
+            
+            start = startOfWeek;
+            end = new Date(startOfWeek);
+            end.setDate(end.getDate() + 7);
+            break;
+        }
+        case 'month':
+        case 'this_month':
+        case 'tháng':
+        case 'tháng này': {
+            const now = new Date();
+            const tzOffset = 7 * 60;
+            const localTime = now.getTime() + (now.getTimezoneOffset() * 60000) + (tzOffset * 60000);
+            const ictDate = new Date(localTime);
+            
+            const startOfMonth = new Date(Date.UTC(
+                ictDate.getFullYear(),
+                ictDate.getMonth(),
+                1,
+                0, 0, 0, 0
+            ));
+            startOfMonth.setHours(startOfMonth.getHours() - 7);
+            
+            const endOfMonth = new Date(Date.UTC(
+                ictDate.getFullYear(),
+                ictDate.getMonth() + 1,
+                1,
+                0, 0, 0, 0
+            ));
+            endOfMonth.setHours(endOfMonth.getHours() - 7);
+            
+            start = startOfMonth;
+            end = endOfMonth;
+            break;
+        }
+        default:
+            return null;
+    }
+    return { start, end };
+}
+
 async function list(req, res) {
     try {
         const filter = req.body.filter || req.query.filter;
         const status = req.body.status || req.query.status || req.body.giaiDoan || req.query.giaiDoan;
         const keyword = req.body.keyword || req.query.keyword || req.body.q || req.query.q;
+        const isCalendar = req.body.isCalendar === true || req.body.isCalendar === 'true';
+        const dateField = req.body.dateField || req.query.dateField || 'cacNgay.ngayChup';
+        const chotLich = req.body.chotLich || req.query.chotLich;
         
         let query = {};
 
-        // 1. Lọc theo thời gian tạo
-        if (filter && filter !== 'all') {
-            const startDate = getICTStartDateForFilter(filter);
-            if (startDate) {
-                query.ngayHopDong = { $gte: startDate };
+        if (chotLich !== undefined && chotLich !== null && chotLich !== '' && chotLich !== 'all') {
+            if (Array.isArray(chotLich)) {
+                query['cacNgay.chotLich'] = { $in: chotLich };
+            } else {
+                query['cacNgay.chotLich'] = chotLich;
+            }
+        }
+
+        // 1. Lọc theo thời gian
+        if (isCalendar) {
+            if (filter && filter !== 'all') {
+                const range = getICTDateRange(filter);
+                if (range) {
+                    query[dateField] = { $gte: range.start, $lt: range.end };
+                }
+            } else {
+                query[dateField] = { $exists: true, $ne: null };
+            }
+        } else {
+            if (filter && filter !== 'all') {
+                const startDate = getICTStartDateForFilter(filter);
+                if (startDate) {
+                    query.ngayHopDong = { $gte: startDate };
+                }
             }
         }
 
@@ -289,6 +385,11 @@ async function list(req, res) {
         // ==========================================
         // SỬ DỤNG .POPULATE() ĐỂ LẤY THÔNG TIN
         // ==========================================
+        let sortQuery = { ngayHopDong: -1 };
+        if (isCalendar) {
+            sortQuery = { [dateField]: 1 };
+        }
+
         const hopDong = await HopDong.find(query)
             .populate({
                 path: 'khachHang1',      // Tên trường chứa ObjectId của khách hàng 1
@@ -298,7 +399,7 @@ async function list(req, res) {
                 path: 'khachHang2',      // Tên trường chứa ObjectId của khách hàng 2
                 select: 'tenKhachHang soDienThoai'
             })
-            .sort({ ngayHopDong: -1 });
+            .sort(sortQuery);
 
         return success(res, "Tải dữ liệu thành công !", {
             filter: filter || "all",
