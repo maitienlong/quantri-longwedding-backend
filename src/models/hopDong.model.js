@@ -44,6 +44,7 @@ const hopDongSchema = new mongoose.Schema({
     loaiGiamGia: { type: Number }, // 0: tiền mặt, 1: phần trăm
     tongGiaTriSauGiam: { type: Number },
     khachHangDaThanhToan: { type: Number },
+    conLai: { type: Number },
     cacLuotThanhToan: [payment.schema]
   },
   cacNgay: {
@@ -117,6 +118,18 @@ hopDongSchema.pre('save', async function (next) {
     // 3. Tính tổng giá trị sau khi giảm
     const ketQua = tongChuaGiam - soTienDuocGiam;
     this.thanhToan.tongGiaTriSauGiam = Math.max(0, ketQua); // Đảm bảo không âm
+
+    // 4. Tính tổng khách hàng đã thanh toán từ danh sách các lượt thanh toán
+    if (this.thanhToan.cacLuotThanhToan && this.thanhToan.cacLuotThanhToan.length > 0) {
+      this.thanhToan.khachHangDaThanhToan = this.thanhToan.cacLuotThanhToan.reduce((total, p) => total + (Number(p.amount) || 0), 0);
+    } else {
+      this.thanhToan.khachHangDaThanhToan = this.thanhToan.khachHangDaThanhToan || 0;
+    }
+
+    // 5. Tính tổng tiền còn lại phải thanh toán
+    const tongSauGiam = this.thanhToan.tongGiaTriSauGiam || 0;
+    const daThanhToan = this.thanhToan.khachHangDaThanhToan || 0;
+    this.thanhToan.conLai = Math.max(0, tongSauGiam - daThanhToan);
 
     next();
   } catch (error) {
