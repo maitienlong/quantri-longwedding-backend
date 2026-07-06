@@ -7,6 +7,8 @@ router.post("/create", authMiddleware, hopDongService.create);
 router.post("/update", authMiddleware, hopDongService.update);
 router.post("/pay", authMiddleware, hopDongService.pay);
 router.post("/remove", authMiddleware, hopDongService.remove);
+router.post("/update-progress", authMiddleware, hopDongService.updateProgress);
 router.post("/list", authMiddleware, hopDongService.list);
+router.post("/search", authMiddleware, hopDongService.search);
 
 module.exports = router;

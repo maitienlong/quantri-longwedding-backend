@@ -3,6 +3,17 @@ const KHACHHANG = require("./khachHang.model");
 const payment = require("./payment.model");
 const DICHVU = require("./dichVu.model");
 
+const paymentSubSchema = new mongoose.Schema({
+  id: { type: String, required: true },
+  khachHang: { type: String, required: true },
+  amount: { type: Number, required: true },
+  date: { type: Date, required: true },
+  method: { type: String, required: true },
+  noiDung: { type: String }
+}, {
+  timestamps: true
+});
+
 const cartItemSchema = new mongoose.Schema({
   dichVu: {
     type: mongoose.Schema.Types.ObjectId,
@@ -45,7 +56,7 @@ const hopDongSchema = new mongoose.Schema({
     tongGiaTriSauGiam: { type: Number },
     khachHangDaThanhToan: { type: Number },
     conLai: { type: Number },
-    cacLuotThanhToan: [payment.schema]
+    cacLuotThanhToan: [paymentSubSchema]
   },
   cacNgay: {
     ngayChup: { type: Date },
@@ -65,6 +76,14 @@ const hopDongSchema = new mongoose.Schema({
   },
   giaiDoan: { type: Number, required: true },
   dichVuChinh: { type: Number, required: true },
+  linkAnhGoc: { type: String },
+  linkAnhChinhSua: { type: String },
+  danhSachAnhIn: [
+    {
+      kichThuoc: { type: String },
+      soLuong: { type: Number }
+    }
+  ],
 }, {
   timestamps: true
 });
