@@ -17,9 +17,42 @@ function getICTDateTimeString() {
     return `${localDate.getFullYear()}-${pad(localDate.getMonth() + 1)}-${pad(localDate.getDate())}T${pad(localDate.getHours())}:${pad(localDate.getMinutes())}:${pad(localDate.getSeconds())}.${msPad(localDate.getMilliseconds())}+07:00`;
 }
 
+function formatICTDateTime(date) {
+    if (!date) return "";
+    const d = new Date(date);
+    if (isNaN(d.getTime())) return "";
+    const tzOffset = 7 * 60; // UTC+7 in minutes
+    const ictDate = new Date(d.getTime() + (d.getTimezoneOffset() * 60000) + (tzOffset * 60000));
+    const pad = (n) => n.toString().padStart(2, '0');
+    return `${pad(ictDate.getHours())}:${pad(ictDate.getMinutes())} ngày ${pad(ictDate.getDate())}/${pad(ictDate.getMonth() + 1)}/${ictDate.getFullYear()}`;
+}
+
 async function create(req, res) {
 
     try {
+        // Kiểm tra trùng lịch chụp hình (khoảng cách dưới 3 tiếng)
+        if (req.body.cacNgay?.ngayChup) {
+            const ngayChupTime = new Date(req.body.cacNgay.ngayChup).getTime();
+            if (!isNaN(ngayChupTime)) {
+                const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+                const minTime = new Date(ngayChupTime - THREE_HOURS_MS);
+                const maxTime = new Date(ngayChupTime + THREE_HOURS_MS);
+
+                const conflictingContract = await HopDong.findOne({
+                    "cacNgay.ngayChup": {
+                        $gte: minTime,
+                        $lte: maxTime
+                    }
+                }).populate("khachHang1", "tenKhachHang");
+
+                if (conflictingContract) {
+                    const timeStr = formatICTDateTime(conflictingContract.cacNgay.ngayChup);
+                    const khachHangName = conflictingContract.khachHang1?.tenKhachHang || "Khách hàng";
+                    return error(res, `Không thể lưu hợp đồng! Lịch chụp hình bị trùng hoặc quá gần (dưới 3 tiếng) với HĐ ${conflictingContract.maHopDong} (${khachHangName}) vào lúc ${timeStr}.`);
+                }
+            }
+        }
+
         const hopDong = new HopDong({
             maHopDong: req.body.maHopDong,
             ngayHopDong: getICTDateTimeString(),
@@ -111,16 +144,29 @@ async function create(req, res) {
 
 async function update(req, res) {
     try {
-        const { maHopDong, gioHang, thanhToan, nguoiPhucVu, giaiDoan, cacNgay, linkAnhGoc, linkAnhChinhSua } = req.body;
+        const { maHopDong, gioHang, thanhToan, nguoiPhucVu, giaiDoan, cacNgay, linkAnhGoc, linkAnhChinhSua, danhSachAnhIn } = req.body;
         const hopDong = await HopDong.findOne({ maHopDong });
         if (!hopDong) return error(res, "Không tìm thấy hợp đồng");
 
         if (gioHang !== undefined) hopDong.gioHang = gioHang;
-        if (cacNgay !== undefined) hopDong.cacNgay = cacNgay;
+        if (cacNgay !== undefined) {
+            const oldNgayChuyen = hopDong.cacNgay?.ngayChuyenInAnh;
+            hopDong.cacNgay = cacNgay;
+            if (oldNgayChuyen && !hopDong.cacNgay.ngayChuyenInAnh) {
+                hopDong.cacNgay.ngayChuyenInAnh = oldNgayChuyen;
+            }
+        }
         if (nguoiPhucVu !== undefined) hopDong.nguoiPhucVu = nguoiPhucVu;
-        if (giaiDoan !== undefined) hopDong.giaiDoan = giaiDoan;
+        if (giaiDoan !== undefined) {
+            if (Number(giaiDoan) === 4 && hopDong.giaiDoan !== 4) {
+                if (!hopDong.cacNgay) hopDong.cacNgay = {};
+                hopDong.cacNgay.ngayChuyenInAnh = new Date();
+            }
+            hopDong.giaiDoan = giaiDoan;
+        }
         if (linkAnhGoc !== undefined) hopDong.linkAnhGoc = linkAnhGoc;
         if (linkAnhChinhSua !== undefined) hopDong.linkAnhChinhSua = linkAnhChinhSua;
+        if (danhSachAnhIn !== undefined) hopDong.danhSachAnhIn = danhSachAnhIn;
 
         if (thanhToan !== undefined) {
             hopDong.thanhToan = thanhToan;
@@ -578,6 +624,8 @@ async function updateProgress(req, res) {
                 }
             }
             hopDong.danhSachAnhIn = data.danhSachAnhIn;
+            if (!hopDong.cacNgay) hopDong.cacNgay = {};
+            hopDong.cacNgay.ngayChuyenInAnh = new Date();
         }
 
         hopDong.giaiDoan = nextStage;

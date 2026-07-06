@@ -64,6 +64,7 @@ const hopDongSchema = new mongoose.Schema({
     ngayCuoi: { type: Date },
     ngayChinhAnh: { type: Date },
     ngayTraAnh: { type: Date },
+    ngayChuyenInAnh: { type: Date },
     ngayMuonDo: { type: Date },
     ngayTraDo: { type: Date },
     gioChup: { type: String },
