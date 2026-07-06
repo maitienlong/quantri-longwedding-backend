@@ -338,14 +338,36 @@ async function list(req, res) {
         }
 
         // 1. Lọc theo thời gian
+        let dateConditions = null;
         if (isCalendar) {
-            if (filter && filter !== 'all') {
-                const range = getICTDateRange(filter);
-                if (range) {
-                    query[dateField] = { $gte: range.start, $lt: range.end };
+            if (dateField === 'anHoiVaCuoi') {
+                if (filter && filter !== 'all') {
+                    const range = getICTDateRange(filter);
+                    if (range) {
+                        dateConditions = {
+                            $or: [
+                                { 'cacNgay.ngayAnHoi': { $gte: range.start, $lt: range.end } },
+                                { 'cacNgay.ngayCuoi': { $gte: range.start, $lt: range.end } }
+                            ]
+                        };
+                    }
+                } else {
+                    dateConditions = {
+                        $or: [
+                            { 'cacNgay.ngayAnHoi': { $exists: true, $ne: null } },
+                            { 'cacNgay.ngayCuoi': { $exists: true, $ne: null } }
+                        ]
+                    };
                 }
             } else {
-                query[dateField] = { $exists: true, $ne: null };
+                if (filter && filter !== 'all') {
+                    const range = getICTDateRange(filter);
+                    if (range) {
+                        query[dateField] = { $gte: range.start, $lt: range.end };
+                    }
+                } else {
+                    query[dateField] = { $exists: true, $ne: null };
+                }
             }
         } else {
             if (filter && filter !== 'all') {
@@ -366,6 +388,7 @@ async function list(req, res) {
         }
 
         // 3. Tìm kiếm theo từ khóa (mã hợp đồng, số điện thoại, tên khách hàng)
+        let keywordConditions = null;
         if (keyword) {
             const customers = await KhachHang.find({
                 $or: [
@@ -375,11 +398,22 @@ async function list(req, res) {
             });
             const customerIds = customers.map(c => c._id);
             
-            query.$or = [
-                { maHopDong: { $regex: keyword, $options: 'i' } },
-                { khachHang1: { $in: customerIds } },
-                { khachHang2: { $in: customerIds } }
-            ];
+            keywordConditions = {
+                $or: [
+                    { maHopDong: { $regex: keyword, $options: 'i' } },
+                    { khachHang1: { $in: customerIds } },
+                    { khachHang2: { $in: customerIds } }
+                ]
+            };
+        }
+
+        // Kết hợp dateConditions và keywordConditions
+        if (dateConditions && keywordConditions) {
+            query.$and = [dateConditions, keywordConditions];
+        } else if (dateConditions) {
+            Object.assign(query, dateConditions);
+        } else if (keywordConditions) {
+            Object.assign(query, keywordConditions);
         }
 
         // ==========================================
@@ -387,7 +421,11 @@ async function list(req, res) {
         // ==========================================
         let sortQuery = { ngayHopDong: -1 };
         if (isCalendar) {
-            sortQuery = { [dateField]: 1 };
+            if (dateField === 'anHoiVaCuoi') {
+                sortQuery = { 'cacNgay.ngayAnHoi': 1, 'cacNgay.ngayCuoi': 1 };
+            } else {
+                sortQuery = { [dateField]: 1 };
+            }
         }
 
         const hopDong = await HopDong.find(query)
