@@ -39,6 +39,7 @@ async function create(req, res) {
                 const maxTime = new Date(ngayChupTime + THREE_HOURS_MS);
 
                 const conflictingContract = await HopDong.findOne({
+                    giaiDoan: 1,
                     "cacNgay.ngayChup": {
                         $gte: minTime,
                         $lte: maxTime
@@ -200,15 +201,26 @@ async function update(req, res) {
 
 async function remove(req, res) {
     try {
-        const { maHopDong } = req;
-        const HopDong = await HopDong.findOneAndDelete({ maHopDong: maHopDong });
+        const maHopDong = req.body.maHopDong || req.query.maHopDong || req.body;
+        if (!maHopDong) {
+            return error(res, "Thiếu mã hợp đồng để xóa");
+        }
+        const deletedHD = await HopDong.findOneAndDelete({ maHopDong: maHopDong });
 
-        if (!HopDong) {
-            return error(res, "Không tìm thấy dịch vụ để xóa");
+        if (!deletedHD) {
+            return error(res, "Không tìm thấy hợp đồng để xóa");
         }
 
-        console.log("Đã xóa dịch vụ:", HopDong.tenHopDong);
-        return success(res, { message: "Xóa dịch vụ thành công" });
+        // Cũng xóa cả lịch soạn đồ đi kèm nếu có
+        try {
+            const LichSoanDo = require("../models/lichSoanDo.model");
+            await LichSoanDo.findOneAndDelete({ maHopDong: maHopDong });
+        } catch (e) {
+            console.error("Lỗi khi xóa lịch soạn đồ đi kèm:", e);
+        }
+
+        console.log("Đã xóa hợp đồng:", deletedHD.maHopDong);
+        return success(res, "Xóa hợp đồng thành công");
     } catch (err) {
         return error(res, err.message);
     }

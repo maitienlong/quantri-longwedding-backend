@@ -27,21 +27,90 @@ async function create(req, res) {
 
 
 async function find(req, res) {
-    const data = req.body;
+    const { soDienThoai, keyword } = req.body || {};
     try {
-        console.log("Tìm khách hàng với số điện thoại: " + data.soDienThoai);
-        const khachHang = await KhachHang.find({ soDienThoai: { $regex: data.soDienThoai, $options: 'i' } });
-        if (khachHang.length === 0) {
-            return error(res, "Không tìm thấy khách hàng!");
+        let query = {};
+        if (soDienThoai) {
+            query.soDienThoai = { $regex: soDienThoai, $options: 'i' };
+        } else if (keyword) {
+            query.$or = [
+                { tenKhachHang: { $regex: keyword, $options: 'i' } },
+                { soDienThoai: { $regex: keyword, $options: 'i' } },
+                { diaChi: { $regex: keyword, $options: 'i' } }
+            ];
         }
-        return success(res, "Tìm khách hàng thành công!", khachHang);
+
+        const customers = await KhachHang.find(query).sort({ createdAt: -1 });
+
+        // For each customer, count how many contracts they have
+        const HopDong = require("../models/hopDong.model");
+        const customersWithStats = await Promise.all(customers.map(async (c) => {
+            const contractCount = await HopDong.countDocuments({
+                $or: [
+                    { khachHang1: c._id },
+                    { khachHang2: c._id }
+                ]
+            });
+            return {
+                ...c.toObject(),
+                soHopDong: contractCount
+            };
+        }));
+
+        return success(res, "Tìm khách hàng thành công!", customersWithStats);
     } catch (err) {
         return error(res, err.message);
     }
 }
 
+async function update(req, res) {
+    try {
+        const { _id, tenKhachHang, soDienThoai, avatar, maDangNhap, ngaySinhNhat, gioiTinh, diaChi, ngayCapCCCD } = req.body;
+        if (!_id) return error(res, "Thiếu _id khách hàng để cập nhật");
+
+        const khachHang = await KhachHang.findByIdAndUpdate(
+            _id,
+            { $set: { tenKhachHang, soDienThoai, avatar, maDangNhap, ngaySinhNhat, gioiTinh, diaChi, ngayCapCCCD } },
+            { new: true }
+        );
+
+        if (!khachHang) return error(res, "Không tìm thấy khách hàng để cập nhật");
+        return success(res, "Cập nhật khách hàng thành công!", khachHang);
+    } catch (err) {
+        return error(res, err.message);
+    }
+}
+
+async function remove(req, res) {
+    try {
+        const _id = req.body._id || req.query._id || req.params._id;
+        if (!_id) return error(res, "Thiếu _id khách hàng để xóa");
+
+        // Check if customer has contracts. Warn and prevent delete if linked.
+        const HopDong = require("../models/hopDong.model");
+        const contractCount = await HopDong.countDocuments({
+            $or: [
+                { khachHang1: _id },
+                { khachHang2: _id }
+            ]
+        });
+
+        if (contractCount > 0) {
+            return error(res, `Không thể xóa khách hàng này vì đang có ${contractCount} hợp đồng liên kết trên hệ thống!`);
+        }
+
+        const khachHang = await KhachHang.findByIdAndDelete(_id);
+        if (!khachHang) return error(res, "Không tìm thấy khách hàng để xóa");
+
+        return success(res, "Xóa khách hàng thành công!", { _id });
+    } catch (err) {
+        return error(res, err.message);
+    }
+}
 
 module.exports = {
     create,
-    find
+    find,
+    update,
+    remove
 };
