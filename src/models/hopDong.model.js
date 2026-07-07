@@ -21,9 +21,24 @@ const cartItemSchema = new mongoose.Schema({
     required: true
   },
   tenDichVuSnapshot: String, // Lưu tên để hiển thị nhanh không cần populate
+  loaiDichVu: { type: Number },
   soLuong: { type: Number, min: 1 },
   donGia: { type: Number }, // Giá tại thời điểm ký
-  thanhTien: { type: Number }
+  thanhTien: { type: Number },
+
+  // New service parameters
+  soLuongAnhChinhSua: { type: Number, default: 0 },
+  soLuongAnh16x21: { type: Number, default: 0 },
+  soLuongAnh20x30: { type: Number, default: 0 },
+  soLuongAnh60x90: { type: Number, default: 0 },
+  trangDiemNgayAnHoi: { type: String, default: "" },
+  trangDiemNgayCuoi: { type: String, default: "" },
+  trangPhucChoDoiBeLe: { type: String, default: "" },
+  trangPhucCoDauNgayAnHoi: { type: String, default: "" },
+  trangPhucChuReNgayAnHoi: { type: String, default: "" },
+  trangPhucVayCuoiNgayCuoi: { type: String, default: "" },
+  trangPhucVestChuReNgayCuoi: { type: String, default: "" },
+  hoaCamTay: { type: String, default: "" }
 });
 
 const toDate = (v) => {
@@ -88,6 +103,28 @@ const hopDongSchema = new mongoose.Schema({
       soLuong: { type: Number }
     }
   ],
+  cacLuotChi: [
+    {
+      id: { type: String },
+      date: { type: Date },
+      receiver: { type: String },
+      reason: { type: String },
+      amount: { type: Number },
+      creator: { type: String },
+      note: { type: String }
+    }
+  ],
+  soanDo: {
+    ngaySoan: { type: String },
+    ngayMuon: { type: String },
+    ngayTra: { type: String },
+    datCoc: { type: Number },
+    nguoiKiem: { type: String },
+    noiDung: { type: String },
+    trangThai: { type: String },
+    dsMuon: [mongoose.Schema.Types.Mixed],
+    dsTra: [mongoose.Schema.Types.Mixed]
+  }
 }, {
   timestamps: true
 });
@@ -102,14 +139,57 @@ hopDongSchema.pre('save', async function (next) {
     // 1. Duyệt giỏ hàng để lấy giá và tính tổng
     if (this.gioHang && this.gioHang.length > 0) {
       for (let item of this.gioHang) {
-        // Lấy đơn giá từ DB nếu chưa có (Snapshot)
-        if (!item.donGia) {
+        // Lấy đơn giá và các thông tin snapshot từ DB nếu chưa có
+        if (!item.donGia || !item.loaiDichVu || !item.tenDichVuSnapshot) {
           const dichVuGoc = await DICHVU.findById(item.dichVu);
           if (!dichVuGoc) {
             throw new Error(`Không tìm thấy dịch vụ với ID: ${item.dichVu}`);
           }
-          item.donGia = dichVuGoc.giaTriDichVu;
-          item.tenDichVuSnapshot = dichVuGoc.tenDichVu;
+          if (!item.donGia) {
+            item.donGia = dichVuGoc.giaTriDichVu;
+          }
+          if (!item.tenDichVuSnapshot) {
+            item.tenDichVuSnapshot = dichVuGoc.tenDichVu;
+          }
+          if (!item.loaiDichVu) {
+            item.loaiDichVu = dichVuGoc.loaiDichVu;
+          }
+          if (item.soLuongAnhChinhSua === undefined || item.soLuongAnhChinhSua === null) {
+            item.soLuongAnhChinhSua = dichVuGoc.soLuongAnhChinhSua || 0;
+          }
+          if (item.soLuongAnh16x21 === undefined || item.soLuongAnh16x21 === null) {
+            item.soLuongAnh16x21 = dichVuGoc.soLuongAnh16x21 || 0;
+          }
+          if (item.soLuongAnh20x30 === undefined || item.soLuongAnh20x30 === null) {
+            item.soLuongAnh20x30 = dichVuGoc.soLuongAnh20x30 || 0;
+          }
+          if (item.soLuongAnh60x90 === undefined || item.soLuongAnh60x90 === null) {
+            item.soLuongAnh60x90 = dichVuGoc.soLuongAnh60x90 || 0;
+          }
+          if (!item.trangDiemNgayAnHoi) {
+            item.trangDiemNgayAnHoi = dichVuGoc.trangDiemNgayAnHoi || "";
+          }
+          if (!item.trangDiemNgayCuoi) {
+            item.trangDiemNgayCuoi = dichVuGoc.trangDiemNgayCuoi || "";
+          }
+          if (!item.trangPhucChoDoiBeLe) {
+            item.trangPhucChoDoiBeLe = dichVuGoc.trangPhucChoDoiBeLe || "";
+          }
+          if (!item.trangPhucCoDauNgayAnHoi) {
+            item.trangPhucCoDauNgayAnHoi = dichVuGoc.trangPhucCoDauNgayAnHoi || "";
+          }
+          if (!item.trangPhucChuReNgayAnHoi) {
+            item.trangPhucChuReNgayAnHoi = dichVuGoc.trangPhucChuReNgayAnHoi || "";
+          }
+          if (!item.trangPhucVayCuoiNgayCuoi) {
+            item.trangPhucVayCuoiNgayCuoi = dichVuGoc.trangPhucVayCuoiNgayCuoi || "";
+          }
+          if (!item.trangPhucVestChuReNgayCuoi) {
+            item.trangPhucVestChuReNgayCuoi = dichVuGoc.trangPhucVestChuReNgayCuoi || "";
+          }
+          if (!item.hoaCamTay) {
+            item.hoaCamTay = dichVuGoc.hoaCamTay || "";
+          }
         }
 
         // Tính thanhTien từng item

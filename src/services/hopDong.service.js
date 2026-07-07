@@ -483,6 +483,10 @@ async function list(req, res) {
                 path: 'khachHang2',      // Tên trường chứa ObjectId của khách hàng 2
                 select: 'tenKhachHang soDienThoai'
             })
+            .populate({
+                path: 'gioHang.dichVu',
+                select: 'loaiDichVu tenDichVu giaChoThueDichVu maDichVu'
+            })
             .sort(sortQuery);
 
         return success(res, "Tải dữ liệu thành công !", {
@@ -551,6 +555,10 @@ async function search(req, res) {
                 path: 'khachHang2',
                 select: 'tenKhachHang soDienThoai'
             })
+            .populate({
+                path: 'gioHang.dichVu',
+                select: 'loaiDichVu tenDichVu giaChoThueDichVu maDichVu'
+            })
             .sort({ ngayHopDong: -1 });
             
         return success(res, "Tìm kiếm hợp đồng thành công !", {
@@ -564,9 +572,13 @@ async function search(req, res) {
 
 async function updateProgress(req, res) {
     try {
-        const { maHopDong, giaiDoan, data } = req.body;
+        const { maHopDong, giaiDoan, data, dichVuChinh } = req.body;
         const hopDong = await HopDong.findOne({ maHopDong });
         if (!hopDong) return error(res, "Không tìm thấy hợp đồng");
+
+        if (dichVuChinh !== undefined) {
+            hopDong.dichVuChinh = Number(dichVuChinh);
+        }
 
         const currentStage = hopDong.giaiDoan;
         const nextStage = Number(giaiDoan);
@@ -582,20 +594,27 @@ async function updateProgress(req, res) {
 
         // Kiểm tra quy tắc chuyển tiếp giai đoạn tuần tự (cho phép bỏ qua 4 để lên thẳng 5)
         if (nextStage !== currentStage) {
-            if (currentStage === 1 && nextStage !== 2) {
-                return error(res, "Hợp đồng mới tạo (1) phải chuyển sang giai đoạn Chụp hình (2)");
-            }
-            if (currentStage === 2 && nextStage !== 3) {
-                return error(res, "Từ giai đoạn Chụp hình (2) phải chuyển sang giai đoạn Hậu kỳ (3)");
-            }
-            if (currentStage === 3 && nextStage !== 4 && nextStage !== 5) {
-                return error(res, "Từ giai đoạn Hậu kỳ (3) chỉ được chuyển sang In ảnh (4) hoặc Hoàn thành (5)");
-            }
-            if (currentStage === 4 && nextStage !== 5) {
-                return error(res, "Từ giai đoạn In ảnh (4) chỉ được chuyển sang Hoàn thành (5)");
-            }
-            if (currentStage === 5) {
-                return error(res, "Hợp đồng đã hoàn thành (5), không thể thay đổi giai đoạn");
+            const isAnhThe = Number(hopDong.dichVuChinh) === 5;
+            if (isAnhThe) {
+                if (currentStage === 5) {
+                    return error(res, "Hợp đồng đã hoàn thành (5), không thể thay đổi giai đoạn");
+                }
+            } else {
+                if (currentStage === 1 && nextStage !== 2) {
+                    return error(res, "Hợp đồng mới tạo (1) phải chuyển sang giai đoạn Chụp hình (2)");
+                }
+                if (currentStage === 2 && nextStage !== 3) {
+                    return error(res, "Từ giai đoạn Chụp hình (2) phải chuyển sang giai đoạn Hậu kỳ (3)");
+                }
+                if (currentStage === 3 && nextStage !== 4 && nextStage !== 5) {
+                    return error(res, "Từ giai đoạn Hậu kỳ (3) chỉ được chuyển sang In ảnh (4) hoặc Hoàn thành (5)");
+                }
+                if (currentStage === 4 && nextStage !== 5) {
+                    return error(res, "Từ giai đoạn In ảnh (4) chỉ được chuyển sang Hoàn thành (5)");
+                }
+                if (currentStage === 5) {
+                    return error(res, "Hợp đồng đã hoàn thành (5), không thể thay đổi giai đoạn");
+                }
             }
         }
 
