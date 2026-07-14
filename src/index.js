@@ -25,6 +25,7 @@ const dichVuRoutes = require("./routes/dichVu.router");
 const hopDongRoutes = require("./routes/hopDong.router");
 const chiTieuRoutes = require("./routes/chiTieu.router");
 const lichSoanDoRoutes = require("./routes/lichSoanDo.router");
+const websiteRoutes = require("./routes/website.router");
 
 app.use('/auth', authRoutes);
 app.use('/khachHang', khachHangRoutes);
@@ -32,6 +33,7 @@ app.use('/dichVu', dichVuRoutes);
 app.use('/hopDong', hopDongRoutes);
 app.use('/chiTieu', chiTieuRoutes);
 app.use('/lichSoanDo', lichSoanDoRoutes);
+app.use('/api/website', websiteRoutes);
 app.get("/", (req, res) => {
   res.send("API is running...");
 });
