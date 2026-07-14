@@ -15,7 +15,8 @@ async function create(req, res) {
             ngaySinhNhat: data.ngaySinhNhat || "01/01/2000",
             gioiTinh: data.gioiTinh || "Nam",
             diaChi: data.diaChi || "Địa chỉ chưa cập nhật",
-            ngayCapCCCD: data.ngayCapCCCD || "01/01/2020"
+            ngayCapCCCD: data.ngayCapCCCD || "01/01/2020",
+            facebookId: data.facebookId || ""
         });
         await khachHang.save();
         console.log("Khởi tạo khách hàng: " + data.tenKhachHang + " thành công !");
@@ -27,11 +28,13 @@ async function create(req, res) {
 
 
 async function find(req, res) {
-    const { soDienThoai, keyword } = req.body || {};
+    const { soDienThoai, keyword, facebookId } = req.body || {};
     try {
         let query = {};
         if (soDienThoai) {
             query.soDienThoai = { $regex: soDienThoai, $options: 'i' };
+        } else if (facebookId) {
+            query.facebookId = { $regex: facebookId, $options: 'i' };
         } else if (keyword) {
             query.$or = [
                 { tenKhachHang: { $regex: keyword, $options: 'i' } },
@@ -65,12 +68,12 @@ async function find(req, res) {
 
 async function update(req, res) {
     try {
-        const { _id, tenKhachHang, soDienThoai, avatar, maDangNhap, ngaySinhNhat, gioiTinh, diaChi, ngayCapCCCD } = req.body;
+        const { _id, tenKhachHang, soDienThoai, avatar, maDangNhap, ngaySinhNhat, gioiTinh, diaChi, ngayCapCCCD, facebookId } = req.body;
         if (!_id) return error(res, "Thiếu _id khách hàng để cập nhật");
 
         const khachHang = await KhachHang.findByIdAndUpdate(
             _id,
-            { $set: { tenKhachHang, soDienThoai, avatar, maDangNhap, ngaySinhNhat, gioiTinh, diaChi, ngayCapCCCD } },
+            { $set: { tenKhachHang, soDienThoai, avatar, maDangNhap, ngaySinhNhat, gioiTinh, diaChi, ngayCapCCCD, facebookId } },
             { new: true }
         );
 
@@ -108,9 +111,40 @@ async function remove(req, res) {
     }
 }
 
+async function getFacebookInfo(req, res) {
+    const { url } = req.body;
+    if (!url) return error(res, "Thiếu URL Facebook");
+    try {
+        const formData = new URLSearchParams();
+        formData.append('link', url);
+
+        const response = await fetch('https://id.traodoisub.com/api.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: formData.toString()
+        });
+
+        const json = await response.json();
+        
+        if (json && json.success === 200 && json.id) {
+            return success(res, "Lấy thông tin Facebook thành công!", { 
+                name: json.name || "",
+                uid: json.id
+            });
+        }
+        
+        return error(res, "Không tìm thấy thông tin Facebook");
+    } catch (err) {
+        return error(res, err.message);
+    }
+}
+
 module.exports = {
     create,
     find,
     update,
-    remove
+    remove,
+    getFacebookInfo
 };

@@ -489,11 +489,11 @@ async function list(req, res) {
         const hopDong = await HopDong.find(query)
             .populate({
                 path: 'khachHang1',      // Tên trường chứa ObjectId của khách hàng 1
-                select: 'tenKhachHang soDienThoai' // Chỉ định các trường muốn lấy (ví dụ: tên, SĐT). Cách nhau bằng khoảng trắng.
+                select: 'tenKhachHang soDienThoai diaChi facebookId' // Chỉ định các trường muốn lấy
             })
             .populate({
                 path: 'khachHang2',      // Tên trường chứa ObjectId của khách hàng 2
-                select: 'tenKhachHang soDienThoai'
+                select: 'tenKhachHang soDienThoai diaChi facebookId'
             })
             .populate({
                 path: 'gioHang.dichVu',
