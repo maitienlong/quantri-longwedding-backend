@@ -18,10 +18,10 @@ const xssClean = require('xss-clean');
 // Helmet for security headers (allows cross-origin for images)
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-// Rate limiting (100 requests per 15 minutes)
+// Rate limiting (1000 requests per 15 minutes to allow polling)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 1000,
   message: "Quá nhiều request từ IP này, vui lòng thử lại sau."
 });
 app.use('/api/', limiter);
