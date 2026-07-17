@@ -2,6 +2,7 @@ const HopDong = require("../models/hopDong.model");
 const KhachHang = require("../models/khachHang.model");
 const DichVu = require("../models/dichVu.model");
 const Payment = require("../models/payment.model");
+const Album = require("../models/album.model");
 const { success, error } = require("../utils/response");
 
 // Helper function to get current date-time string in ICT (+07:00) timezone
@@ -669,6 +670,54 @@ async function updateProgress(req, res) {
     }
 }
 
+async function getCustomerContracts(req, res) {
+    try {
+        const customerId = req.user.id;
+        if (!customerId) return error(res, "Không xác định được khách hàng");
+
+        const query = {
+            $or: [
+                { khachHang1: customerId },
+                { khachHang2: customerId }
+            ]
+        };
+
+        const hopDong = await HopDong.find(query)
+            .populate({
+                path: 'khachHang1',
+                select: 'tenKhachHang soDienThoai'
+            })
+            .populate({
+                path: 'khachHang2',
+                select: 'tenKhachHang soDienThoai'
+            })
+            .populate({
+                path: 'gioHang.dichVu',
+                select: 'loaiDichVu tenDichVu giaChoThueDichVu maDichVu'
+            })
+            .sort({ ngayHopDong: -1 })
+            .lean(); // Use lean to modify the objects
+
+        // Attach album data to each contract if exists
+        for (let contract of hopDong) {
+            const album = await Album.findOne({ maHopDong: contract.maHopDong }).lean();
+            if (album) {
+                contract.album = {
+                    publicLink: album.publicLink,
+                    trangThai: album.trangThai,
+                    trangThaiChinhSua: album.trangThaiChinhSua,
+                    soLuongAnh: album.danhSachAnh ? album.danhSachAnh.length : 0,
+                    khachHangXacNhan: album.khachHangXacNhan
+                };
+            }
+        }
+
+        return success(res, "Lấy danh sách hợp đồng thành công!", hopDong);
+    } catch (err) {
+        return error(res, err.message);
+    }
+}
+
 module.exports = {
     create,
     update,
@@ -676,5 +725,6 @@ module.exports = {
     remove,
     list,
     search,
-    updateProgress
+    updateProgress,
+    getCustomerContracts
 };

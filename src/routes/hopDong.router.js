@@ -11,5 +11,6 @@ router.post("/remove", authMiddleware, checkRole(["Nhân viên Sale"]), hopDongS
 router.post("/update-progress", authMiddleware, checkRole(["Nhân viên Sale"]), hopDongService.updateProgress);
 router.post("/list", authMiddleware, checkRole(["Nhân viên Sale", "Thợ chụp hình", "Thợ trang điểm", "Thợ chỉnh ảnh"]), hopDongService.list);
 router.post("/search", authMiddleware, checkRole(["Nhân viên Sale", "Thợ chụp hình", "Thợ trang điểm", "Thợ chỉnh ảnh"]), hopDongService.search);
+router.post("/customer-contracts", authMiddleware, hopDongService.getCustomerContracts);
 
 module.exports = router;

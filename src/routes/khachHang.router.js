@@ -9,5 +9,6 @@ router.post("/find", authMiddleware, checkRole(["Nhân viên Sale"]), khachHangS
 router.post("/update", authMiddleware, checkRole(["Nhân viên Sale"]), khachHangService.update);
 router.post("/remove", authMiddleware, checkRole(["Nhân viên Sale"]), khachHangService.remove);
 router.post("/get-facebook-info", authMiddleware, checkRole(["Nhân viên Sale"]), khachHangService.getFacebookInfo);
+router.post("/login", khachHangService.login);
 
 module.exports = router;

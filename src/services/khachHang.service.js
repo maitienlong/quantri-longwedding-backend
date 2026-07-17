@@ -1,5 +1,6 @@
 const KhachHang = require("../models/khachHang.model");
 const { success, error } = require("../utils/response");
+const jwt = require("jsonwebtoken");
 
 
 
@@ -141,10 +142,64 @@ async function getFacebookInfo(req, res) {
     }
 }
 
+async function login(req, res) {
+    const { soDienThoai, maDangNhap } = req.body;
+    try {
+        if (!soDienThoai || !maDangNhap) {
+            return error(res, "Vui lòng nhập tài khoản (SĐT/Link FB) và mã đăng nhập");
+        }
+
+        let query = {};
+        
+        // Kiểm tra xem là link facebook hay sđt/id
+        if (soDienThoai.includes("facebook.com") || soDienThoai.includes("fb.com")) {
+            const formData = new URLSearchParams();
+            formData.append('link', soDienThoai);
+
+            const response = await fetch('https://id.traodoisub.com/api.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: formData.toString()
+            });
+
+            const json = await response.json();
+            if (json && json.success === 200 && json.id) {
+                query.facebookId = json.id;
+            } else {
+                return error(res, "Không thể trích xuất ID từ link Facebook này.");
+            }
+        } else {
+            query = { $or: [{ soDienThoai: soDienThoai }, { facebookId: soDienThoai }] };
+        }
+
+        const khachHang = await KhachHang.findOne(query);
+        if (!khachHang) {
+            return error(res, "Khách hàng không tồn tại trên hệ thống");
+        }
+
+        if (khachHang.maDangNhap !== maDangNhap) {
+            return error(res, "Mã đăng nhập không đúng");
+        }
+
+        const token = jwt.sign(
+            { id: khachHang._id, soDienThoai: khachHang.soDienThoai, role: 'KhachHang', fullname: khachHang.tenKhachHang },
+            process.env.JWT_SECRET,
+            { expiresIn: "30d" }
+        );
+
+        return success(res, "Đăng nhập thành công!", { token, khachHang });
+    } catch (err) {
+        return error(res, err.message);
+    }
+}
+
 module.exports = {
     create,
     find,
     update,
     remove,
-    getFacebookInfo
+    getFacebookInfo,
+    login
 };

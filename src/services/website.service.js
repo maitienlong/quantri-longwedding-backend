@@ -148,3 +148,24 @@ exports.addSectionItemPublic = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+exports.uploadImage = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "Vui lòng chọn ảnh!" });
+    }
+
+    const relativePath = `/uploads/${req.file.filename}`;
+    const host = req.protocol + '://' + req.get('host');
+    const absoluteUrl = `${host}${relativePath}`;
+
+    res.status(200).json({
+      success: true,
+      message: "Tải ảnh lên thành công",
+      url: absoluteUrl,
+      path: relativePath
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

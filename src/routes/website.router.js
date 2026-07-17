@@ -3,6 +3,10 @@ const router = express.Router();
 const websiteService = require("../services/website.service.js");
 const authMiddleware = require("../middleware/auth.middleware");
 const checkRole = require("../middleware/role.middleware");
+const upload = require("../middleware/upload.middleware");
+
+// Route upload ảnh (đặt trước /:section để tránh trùng khớp tham số)
+router.post("/upload", authMiddleware, upload.single("image"), websiteService.uploadImage);
 
 // Public API để website lấy dữ liệu
 router.get("/:section", websiteService.getSection);

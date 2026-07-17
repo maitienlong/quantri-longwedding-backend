@@ -11,14 +11,23 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "axios": "^1.18.1",
     "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.3",
     "bluebird": "^3.7.2",
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
+    "express-mongo-sanitize": "^2.2.0",
+    "express-rate-limit": "^8.6.0",
+    "googleapis": "^173.0.0",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.16.5",
-    "nodemon": "^3.1.10"
+    "multer": "^2.2.0",
+    "nodemon": "^3.1.10",
+    "sharp": "^0.35.3",
+    "xss-clean": "^0.1.4"
   }
 }
