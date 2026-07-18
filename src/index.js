@@ -27,9 +27,9 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 app.use('/auth/', limiter);
 
-// Body parser limits (reduced to 2MB)
-app.use(express.json({ limit: "2mb" }));
-app.use(express.urlencoded({ limit: "2mb", extended: true }));
+// Body parser limits (nới rộng lên 50MB cho phép gửi payload ảnh dung lượng lớn)
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // CORS configuration
 app.use(cors());
@@ -67,8 +67,6 @@ const lichSoanDoRoutes = require("./routes/lichSoanDo.router");
 const websiteRoutes = require("./routes/website.router");
 const albumRoutes = require("./routes/album.router");
 const logRoutes = require("./routes/log.router");
-const accountRoutes = require("./routes/account.router");
-const authWebsiteRoutes = require("./routes/authWebsite.router");
 const visitorsRoutes = require("./routes/visitors.router");
 
 app.use('/auth', authRoutes);
@@ -80,8 +78,6 @@ app.use('/lichSoanDo', lichSoanDoRoutes);
 app.use('/api/website', websiteRoutes);
 app.use('/api/album', albumRoutes);
 app.use('/api/log', logRoutes);
-app.use('/api/account', accountRoutes);
-app.use('/api/authWebsite', authWebsiteRoutes);
 app.use('/api/visitors', visitorsRoutes);
 app.get("/", (req, res) => {
   res.send("API is running...");

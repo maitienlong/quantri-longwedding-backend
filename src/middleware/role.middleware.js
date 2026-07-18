@@ -15,8 +15,8 @@ const checkRole = (allowedRoles) => {
 
       const role = user.positon; // Trường trong database là 'positon' do typo
 
-      // Quản lý luôn có toàn quyền truy cập
-      if (role === "Quản lý") {
+      // Quản lý và Admin luôn có toàn quyền truy cập
+      if (role === "Quản lý" || role === "Admin" || role === "Quản trị viên") {
         return next();
       }
 

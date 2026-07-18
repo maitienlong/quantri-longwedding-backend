@@ -226,7 +226,7 @@ const commentImage = async (req, res) => {
 const updateAlbumSettings = async (req, res) => {
   try {
     const { maHopDong } = req.params;
-    const { coGioiHanAnh, soLuongAnhGioiHan, khachHangXacNhan } = req.body;
+    const { coGioiHanAnh, soLuongAnhGioiHan, khachHangXacNhan, isSpecialCollection } = req.body;
     
     const album = await ALBUM.findOne({ maHopDong });
     if (!album) return res.status(404).json({ status: 'error', message: 'Không tìm thấy album' });
@@ -236,6 +236,11 @@ const updateAlbumSettings = async (req, res) => {
     if (khachHangXacNhan !== undefined) album.khachHangXacNhan = khachHangXacNhan;
 
     await album.save();
+
+    if (isSpecialCollection !== undefined) {
+      await HOPDONG.updateOne({ maHopDong }, { isSpecialCollection });
+    }
+
     return res.status(200).json({ status: 'success', message: 'Đã cập nhật cài đặt', album });
   } catch (error) {
     return res.status(500).json({ status: 'error', message: 'Lỗi server' });

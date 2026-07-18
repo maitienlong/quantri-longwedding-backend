@@ -114,6 +114,8 @@ const hopDongSchema = new mongoose.Schema({
       note: { type: String }
     }
   ],
+  isSpecialCollection: { type: Boolean, default: false },
+  specialCollectionOrder: { type: Number, default: 0 },
   soanDo: {
     ngaySoan: { type: String },
     ngayMuon: { type: String },
