@@ -84,7 +84,7 @@ app.use('/api/album', albumRoutes);
 app.use('/api/log', logRoutes);
 app.use('/api/visitors', visitorsRoutes);
 app.get("/", (req, res) => {
-  res.send("API is running...");
+  res.send("API is running... " + process.env.VERSION);
 });
 
 // Global Error Handler (Hides stack traces in production)
