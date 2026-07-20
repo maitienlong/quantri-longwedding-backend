@@ -196,7 +196,22 @@ const getAdminAlbums = async (req, res) => {
 const getAdminAlbumDetail = async (req, res) => {
   try {
     const { maHopDong } = req.params;
-    const album = await ALBUM.findOne({ maHopDong });
+    let album = await ALBUM.findOne({ maHopDong });
+
+    // Tự động kiểm tra và khởi tạo album nếu hợp đồng đã có link drive mà chưa tạo album document
+    if (!album) {
+      const hopDong = await HOPDONG.findOne({ maHopDong });
+      const driveLink = hopDong?.linkAnhGoc || hopDong?.linkAnhChinhSua;
+      if (driveLink) {
+        const loaiAnh = hopDong?.linkAnhChinhSua ? 'chinhSua' : 'goc';
+        const publicLink = crypto.randomBytes(8).toString('hex');
+        album = new ALBUM({ maHopDong, driveLink, publicLink, trangThai: 'Đang xử lý', danhSachAnh: [] });
+        await album.save();
+
+        processImagesInBackground(album._id, driveLink, loaiAnh).catch(err => console.error("Lỗi auto sync background:", err));
+      }
+    }
+
     if (!album) return res.status(404).json({ status: 'error', message: 'Không tìm thấy album' });
     return res.status(200).json({ status: 'success', album });
   } catch (error) {
@@ -352,6 +367,42 @@ const getSharedAlbum = async (req, res) => {
   }
 };
 
+const convertDriveToBase64 = async (req, res) => {
+  try {
+    const { idDrive, url } = req.body;
+    let targetUrl = url;
+
+    if (idDrive) {
+      targetUrl = `https://drive.google.com/uc?export=download&id=${idDrive}`;
+    }
+
+    if (!targetUrl) {
+      return res.status(400).json({ status: 'error', message: 'Thiếu thông tin idDrive hoặc url' });
+    }
+
+    const response = await axios.get(targetUrl, {
+      responseType: 'arraybuffer',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+      },
+      maxRedirects: 5
+    });
+
+    const mimeType = response.headers['content-type'] || 'image/jpeg';
+    const base64Buffer = Buffer.from(response.data).toString('base64');
+    const base64Data = `data:${mimeType};base64,${base64Buffer}`;
+
+    return res.status(200).json({
+      status: 'success',
+      base64: base64Data,
+      mimeType
+    });
+  } catch (error) {
+    console.error('Lỗi convertDriveToBase64:', error.message);
+    return res.status(500).json({ status: 'error', message: 'Không thể chuyển đổi ảnh từ Google Drive sang Base64 trên server' });
+  }
+};
+
 module.exports = {
   syncDriveToAlbum,
   getAdminAlbums,
@@ -362,5 +413,6 @@ module.exports = {
   updateAlbumSettings,
   completeSelection,
   generateShareLink,
-  getSharedAlbum
+  getSharedAlbum,
+  convertDriveToBase64
 };
