@@ -11,7 +11,7 @@ async function create(req, res) {
             maKhachHang: data.maKhachHang,
             tenKhachHang: data.tenKhachHang,
             soDienThoai: data.soDienThoai,
-            avatar: data.avatar || "https://pngtree.com/free-png-vectors/avatar-placeholder",
+            avatar: data.avatar || "",
             maDangNhap: data.maDangNhap || "abcd1234",
             ngaySinhNhat: data.ngaySinhNhat || "01/01/2000",
             gioiTinh: data.gioiTinh || "Nam",
@@ -72,9 +72,12 @@ async function update(req, res) {
         const { _id, tenKhachHang, soDienThoai, avatar, maDangNhap, ngaySinhNhat, gioiTinh, diaChi, ngayCapCCCD, facebookId } = req.body;
         if (!_id) return error(res, "Thiếu _id khách hàng để cập nhật");
 
+        const updateFields = { tenKhachHang, soDienThoai, maDangNhap, ngaySinhNhat, gioiTinh, diaChi, ngayCapCCCD, facebookId };
+        if (avatar !== undefined) updateFields.avatar = avatar;
+
         const khachHang = await KhachHang.findByIdAndUpdate(
             _id,
-            { $set: { tenKhachHang, soDienThoai, avatar, maDangNhap, ngaySinhNhat, gioiTinh, diaChi, ngayCapCCCD, facebookId } },
+            { $set: updateFields },
             { new: true }
         );
 

@@ -68,6 +68,8 @@ const websiteRoutes = require("./routes/website.router");
 const albumRoutes = require("./routes/album.router");
 const logRoutes = require("./routes/log.router");
 const visitorsRoutes = require("./routes/visitors.router");
+const loaiHopDongRoutes = require("./routes/loaiHopDong.router");
+const thiduaRoutes = require("./routes/thidua.router");
 
 app.use('/auth', authRoutes);
 app.use('/khachHang', khachHangRoutes);
@@ -75,6 +77,8 @@ app.use('/dichVu', dichVuRoutes);
 app.use('/hopDong', hopDongRoutes);
 app.use('/chiTieu', chiTieuRoutes);
 app.use('/lichSoanDo', lichSoanDoRoutes);
+app.use('/loaiHopDong', loaiHopDongRoutes);
+app.use('/api/thi-dua', thiduaRoutes);
 app.use('/api/website', websiteRoutes);
 app.use('/api/album', albumRoutes);
 app.use('/api/log', logRoutes);

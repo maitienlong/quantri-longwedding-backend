@@ -6,12 +6,29 @@ const { success, error } = require("../utils/response");
 async function createUser(req, res) {
     const data = req.body;
     try {
-        const user = new User({ username: data.username, password: data.password, fullname: data.fullname, birthday: data.birthday, positon: data.positon, permission: data.permission });
+        const user = new User({ 
+            username: data.username, 
+            password: data.password, 
+            fullname: data.fullname, 
+            birthday: data.birthday, 
+            positon: data.positon, 
+            permission: data.permission,
+            avatar: data.avatar || "",
+            luongCoBan: data.luongCoBan !== undefined ? Number(data.luongCoBan) : 0,
+            luongHoaHong: data.luongHoaHong !== undefined ? Number(data.luongHoaHong) : 0,
+            loaiHoaHong: data.loaiHoaHong !== undefined ? Number(data.loaiHoaHong) : 0,
+            chiTieuTuan: data.chiTieuTuan !== undefined ? Number(data.chiTieuTuan) : 5,
+            chiTieuThang: data.chiTieuThang !== undefined ? Number(data.chiTieuThang) : 20,
+            chiTieuNam: data.chiTieuNam !== undefined ? Number(data.chiTieuNam) : 200
+        });
         await user.save();
         console.log("Tài khoản: " + data.fullname + " đã được tạo thành công !");
         return success(res, "Tạo tài khoản thành công!", {
             username: user.username, fullname: user.fullname,
-            birthday: user.birthday, positon: user.positon, permission: user.permission
+            birthday: user.birthday, positon: user.positon, permission: user.permission,
+            avatar: user.avatar,
+            luongCoBan: user.luongCoBan, luongHoaHong: user.luongHoaHong, loaiHoaHong: user.loaiHoaHong,
+            chiTieuTuan: user.chiTieuTuan, chiTieuThang: user.chiTieuThang, chiTieuNam: user.chiTieuNam
         });
     } catch (err) {
        return error(res, "Tạo user thất bại !" + err.message);
@@ -20,7 +37,7 @@ async function createUser(req, res) {
 
 async function updateUser(req, res) {
     try {
-        const { username, password, fullname, birthday, positon, permission } = req.body;
+        const { username, password, fullname, birthday, positon, permission, avatar, luongCoBan, luongHoaHong, loaiHoaHong, chiTieuTuan, chiTieuThang, chiTieuNam } = req.body;
         if (!username) return error(res, "Thiếu username để cập nhật");
 
         const user = await User.findOne({ username });
@@ -31,6 +48,13 @@ async function updateUser(req, res) {
         if (birthday !== undefined) user.birthday = birthday;
         if (positon !== undefined) user.positon = positon;
         if (permission !== undefined) user.permission = Number(permission);
+        if (avatar !== undefined) user.avatar = avatar;
+        if (luongCoBan !== undefined) user.luongCoBan = Number(luongCoBan);
+        if (luongHoaHong !== undefined) user.luongHoaHong = Number(luongHoaHong);
+        if (loaiHoaHong !== undefined) user.loaiHoaHong = Number(loaiHoaHong);
+        if (chiTieuTuan !== undefined) user.chiTieuTuan = Number(chiTieuTuan);
+        if (chiTieuThang !== undefined) user.chiTieuThang = Number(chiTieuThang);
+        if (chiTieuNam !== undefined) user.chiTieuNam = Number(chiTieuNam);
 
         await user.save();
         console.log(`Đã cập nhật người dùng: ${username}`);
@@ -39,7 +63,14 @@ async function updateUser(req, res) {
             fullname: user.fullname,
             birthday: user.birthday,
             positon: user.positon,
-            permission: user.permission
+            permission: user.permission,
+            avatar: user.avatar,
+            luongCoBan: user.luongCoBan,
+            luongHoaHong: user.luongHoaHong,
+            loaiHoaHong: user.loaiHoaHong,
+            chiTieuTuan: user.chiTieuTuan,
+            chiTieuThang: user.chiTieuThang,
+            chiTieuNam: user.chiTieuNam
         });
     } catch (err) {
         return error(res, "Cập nhật nhân viên thất bại: " + err.message);
@@ -115,7 +146,8 @@ async function loginUser(req, res) {
             fullname: user.fullname,
             birthday: user.birthday,
             positon: user.positon,
-            permission: user.permission
+            permission: user.permission,
+            avatar: user.avatar
         });
 
     } catch (err) {

@@ -21,9 +21,7 @@ exports.getSection = async (req, res) => {
           const album = await Album.findOne({ maHopDong: contract.maHopDong });
           let images = [];
           if (album) {
-            const list = (album.danhSachAnhChinhSua && album.danhSachAnhChinhSua.length > 0)
-              ? album.danhSachAnhChinhSua
-              : (album.danhSachAnh || []);
+            const list = album.danhSachAnhChinhSua || [];
             images = list.map(img => img.urlNen || img.urlGoc).filter(Boolean);
           }
 
@@ -39,7 +37,7 @@ exports.getSection = async (req, res) => {
             id: contract.maHopDong,
             _id: contract._id,
             maHopDong: contract.maHopDong,
-            title: `Bộ Sưu Tập ${coupleName || contract.maHopDong}`,
+            title: (album && album.chuDe) ? album.chuDe : `Bộ Sưu Tập ${coupleName || contract.maHopDong}`,
             coupleName: coupleName,
             coverImage: images[0] || 'https://images.unsplash.com/photo-1519741497674-611481863552?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
             cover: images[0] || 'https://images.unsplash.com/photo-1519741497674-611481863552?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
@@ -69,9 +67,7 @@ exports.getSection = async (req, res) => {
           const album = await Album.findOne({ maHopDong: contract.maHopDong });
           let images = [];
           if (album) {
-            const list = (album.danhSachAnhChinhSua && album.danhSachAnhChinhSua.length > 0)
-              ? album.danhSachAnhChinhSua
-              : (album.danhSachAnh || []);
+            const list = album.danhSachAnhChinhSua || [];
             images = list.map(img => img.urlNen || img.urlGoc).filter(Boolean);
           }
 
@@ -86,7 +82,7 @@ exports.getSection = async (req, res) => {
           specialCollections.push({
             id: contract.maHopDong,
             _id: contract.maHopDong,
-            title: `Bộ Sưu Tập ${coupleName || contract.maHopDong}`,
+            title: (album && album.chuDe) ? album.chuDe : `Bộ Sưu Tập ${coupleName || contract.maHopDong}`,
             coupleName: coupleName,
             coverImage: images[0] || 'https://images.unsplash.com/photo-1519741497674-611481863552?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
             cover: images[0] || 'https://images.unsplash.com/photo-1519741497674-611481863552?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
@@ -138,9 +134,7 @@ exports.updateSection = async (req, res) => {
         const album = await Album.findOne({ maHopDong: contract.maHopDong });
         let images = [];
         if (album) {
-          const list = (album.danhSachAnhChinhSua && album.danhSachAnhChinhSua.length > 0)
-            ? album.danhSachAnhChinhSua
-            : (album.danhSachAnh || []);
+          const list = album.danhSachAnhChinhSua || [];
           images = list.map(img => img.urlNen || img.urlGoc).filter(Boolean);
         }
 
@@ -156,7 +150,7 @@ exports.updateSection = async (req, res) => {
           id: contract.maHopDong,
           _id: contract._id,
           maHopDong: contract.maHopDong,
-          title: `Bộ Sưu Tập ${coupleName || contract.maHopDong}`,
+          title: (album && album.chuDe) ? album.chuDe : `Bộ Sưu Tập ${coupleName || contract.maHopDong}`,
           coupleName: coupleName,
           coverImage: images[0] || 'https://images.unsplash.com/photo-1519741497674-611481863552?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
           cover: images[0] || 'https://images.unsplash.com/photo-1519741497674-611481863552?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
@@ -257,9 +251,7 @@ exports.deleteSectionItem = async (req, res) => {
         const album = await Album.findOne({ maHopDong: contract.maHopDong });
         let images = [];
         if (album) {
-          const list = (album.danhSachAnhChinhSua && album.danhSachAnhChinhSua.length > 0)
-            ? album.danhSachAnhChinhSua
-            : (album.danhSachAnh || []);
+          const list = album.danhSachAnhChinhSua || [];
           images = list.map(img => img.urlNen || img.urlGoc).filter(Boolean);
         }
 
@@ -275,7 +267,7 @@ exports.deleteSectionItem = async (req, res) => {
           id: contract.maHopDong,
           _id: contract._id,
           maHopDong: contract.maHopDong,
-          title: `Bộ Sưu Tập ${coupleName || contract.maHopDong}`,
+          title: (album && album.chuDe) ? album.chuDe : `Bộ Sưu Tập ${coupleName || contract.maHopDong}`,
           coupleName: coupleName,
           coverImage: images[0] || 'https://images.unsplash.com/photo-1519741497674-611481863552?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
           cover: images[0] || 'https://images.unsplash.com/photo-1519741497674-611481863552?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',

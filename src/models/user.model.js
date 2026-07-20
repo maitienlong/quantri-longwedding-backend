@@ -7,7 +7,14 @@ const userSchema = new mongoose.Schema({
     fullname: { type: String },
     birthday: { type: String },
     positon: { type: String, required: true },
-    permission: { type: Number, required: true }
+    permission: { type: Number, required: true },
+    avatar: { type: String },
+    luongCoBan: { type: Number, default: 0 },
+    luongHoaHong: { type: Number, default: 0 },
+    loaiHoaHong: { type: Number, default: 0 }, // 0: VNĐ / công việc, 1: % Doanh số
+    chiTieuTuan: { type: Number, default: 5 },
+    chiTieuThang: { type: Number, default: 20 },
+    chiTieuNam: { type: Number, default: 200 }
 }, { timestamps: true });
 
 // Hash password trước khi lưu

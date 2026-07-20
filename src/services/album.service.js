@@ -22,13 +22,17 @@ const syncDriveToAlbum = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Thiếu thông tin maHopDong hoặc driveLink' });
     }
 
-    // Extract folder ID from link
-    // Extract folder ID from link
-    const match = driveLink.match(/folders\/([a-zA-Z0-9-_]+)/);
-    const folderId = match ? match[1] : driveLink;
+    const isGooglePhotos = driveLink.includes('photos.app.goo.gl') || driveLink.includes('photos.google.com');
+    let folderIdOrLink = driveLink;
 
-    if (!process.env.APPS_SCRIPT_URL) {
-      return res.status(500).json({ status: 'error', message: 'Chưa cấu hình APPS_SCRIPT_URL trong .env' });
+    if (!isGooglePhotos) {
+      // Extract folder ID from link
+      const match = driveLink.match(/folders\/([a-zA-Z0-9-_]+)/);
+      folderIdOrLink = match ? match[1] : driveLink;
+
+      if (!process.env.APPS_SCRIPT_URL) {
+        return res.status(500).json({ status: 'error', message: 'Chưa cấu hình APPS_SCRIPT_URL trong .env' });
+      }
     }
 
     // Tạo publicLink ngẫu nhiên
@@ -48,13 +52,20 @@ const syncDriveToAlbum = async (req, res) => {
     }
     await album.save();
 
+    // Tự động cập nhật link vào hợp đồng ngay khi đồng bộ
+    if (loaiAnh === 'goc') {
+      await HOPDONG.updateOne({ maHopDong }, { linkAnhGoc: driveLink });
+    } else {
+      await HOPDONG.updateOne({ maHopDong }, { linkAnhChinhSua: driveLink });
+    }
+
     // Đợi xử lý đồng bộ xong do luồng mới rất nhanh
-    await processImagesInBackground(album._id, folderId, loaiAnh);
+    await processImagesInBackground(album._id, folderIdOrLink, loaiAnh);
 
     // Lấy lại album sau khi đã đồng bộ xong
     const updatedAlbum = await ALBUM.findById(album._id);
 
-    return res.status(200).json({ status: 'success', message: 'Đã đồng bộ xong ảnh từ Google Drive.', album: updatedAlbum });
+    return res.status(200).json({ status: 'success', message: 'Đã đồng bộ xong ảnh từ Google.', album: updatedAlbum });
 
   } catch (error) {
     console.error("Error syncDriveToAlbum:", error);
@@ -62,48 +73,85 @@ const syncDriveToAlbum = async (req, res) => {
   }
 };
 
-const processImagesInBackground = async (albumId, folderId, loaiAnh) => {
+const processImagesInBackground = async (albumId, folderIdOrLink, loaiAnh) => {
   try {
     const album = await ALBUM.findById(albumId);
     if (!album) return;
 
-    // Call Google Apps Script to get list of files
-    const scriptUrl = process.env.APPS_SCRIPT_URL;
-    const response = await axios.get(`${scriptUrl}?folderId=${folderId}`);
-    
-    if (response.data.status !== 'success') {
-      console.error("Apps Script Error:", response.data.message);
-      if (loaiAnh === 'goc') album.trangThai = 'Lỗi đồng bộ';
-      else album.trangThaiChinhSua = 'Lỗi đồng bộ';
-      await album.save();
-      return;
+    let files = [];
+    const isGooglePhotos = folderIdOrLink.includes('photos.app.goo.gl') || folderIdOrLink.includes('photos.google.com');
+
+    if (isGooglePhotos) {
+      // Fetch Google Photos shared album
+      const response = await axios.get(folderIdOrLink, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+        }
+      });
+      const html = response.data;
+      // Trích xuất toàn bộ URL chứa /pw/ (Public Web của Google Photos)
+      const regex = /https:\/\/lh3\.googleusercontent\.com\/pw\/[A-Za-z0-9\-_]+/g;
+      const matches = html.match(regex) || [];
+      const uniqueUrls = [...new Set(matches)];
+      const photoUrls = uniqueUrls.filter(url => url.length > 50);
+
+      // Trích xuất tên file nguyên bản từ HTML (các chuỗi kết thúc bằng .ext nằm trong dấu nháy kép và không chứa đường dẫn)
+      const filenameRegex = /"([^"\/\\#\?]+\.(?:jpg|jpeg|png|heic|heif|gif|JPG|JPEG|PNG|HEIC|HEIF|GIF))"/g;
+      const filenames = [];
+      let fMatch;
+      while ((fMatch = filenameRegex.exec(html)) !== null) {
+        filenames.push(fMatch[1]);
+      }
+
+      files = photoUrls.map((url, index) => ({
+        id: url.split('/').pop(),
+        name: filenames[index] || `Photo_${index + 1}.jpg`,
+        urlGoc: `${url}=w2048-h2048`,
+        urlNen: `${url}=w1000`
+      }));
+    } else {
+      // Call Google Apps Script to get list of files
+      const scriptUrl = process.env.APPS_SCRIPT_URL;
+      const response = await axios.get(`${scriptUrl}?folderId=${folderIdOrLink}`);
+      
+      if (response.data.status !== 'success') {
+        console.error("Apps Script Error:", response.data.message);
+        if (loaiAnh === 'goc') album.trangThai = 'Lỗi đồng bộ';
+        else album.trangThaiChinhSua = 'Lỗi đồng bộ';
+        await album.save();
+        return;
+      }
+
+      const driveFiles = response.data.data || [];
+      files = driveFiles.map(file => ({
+        id: file.id,
+        name: file.name,
+        urlGoc: `https://drive.google.com/uc?id=${file.id}`,
+        urlNen: `https://drive.google.com/thumbnail?id=${file.id}&sz=w1000`
+      }));
     }
 
-    const files = response.data.data;
-    if (!files || files.length === 0) {
-      if (loaiAnh === 'goc') album.trangThai = 'Hoàn thành';
-      else album.trangThaiChinhSua = 'Hoàn thành';
+    if (files.length === 0) {
+      if (loaiAnh === 'goc') {
+        album.danhSachAnh = [];
+        album.trangThai = 'Hoàn thành';
+      } else {
+        album.danhSachAnhChinhSua = [];
+        album.trangThaiChinhSua = 'Hoàn thành';
+      }
       await album.save();
       return;
     }
 
     const newPhotos = [];
-    const targetArray = loaiAnh === 'goc' ? album.danhSachAnh : album.danhSachAnhChinhSua;
 
     for (let file of files) {
-      // Check if file already exists in album
-      const existing = targetArray.find(a => a.idDrive === file.id);
-      if (existing) continue;
-
       try {
-        const urlGoc = `https://drive.google.com/uc?id=${file.id}`;
-        const urlNen = `https://drive.google.com/thumbnail?id=${file.id}&sz=w1000`;
-
         newPhotos.push({
           idDrive: file.id,
           tenFile: file.name,
-          urlGoc: urlGoc,
-          urlNen: urlNen,
+          urlGoc: file.urlGoc,
+          urlNen: file.urlNen,
           isHearted: false,
           comments: []
         });
@@ -113,16 +161,13 @@ const processImagesInBackground = async (albumId, folderId, loaiAnh) => {
       }
     }
 
-    if (newPhotos.length > 0) {
-      if (loaiAnh === 'goc') {
-        album.danhSachAnh.push(...newPhotos);
-      } else {
-        album.danhSachAnhChinhSua.push(...newPhotos);
-      }
+    if (loaiAnh === 'goc') {
+      album.danhSachAnh = newPhotos;
+      album.trangThai = 'Hoàn thành';
+    } else {
+      album.danhSachAnhChinhSua = newPhotos;
+      album.trangThaiChinhSua = 'Hoàn thành';
     }
-    
-    if (loaiAnh === 'goc') album.trangThai = 'Hoàn thành';
-    else album.trangThaiChinhSua = 'Hoàn thành';
     
     await album.save();
 
@@ -226,7 +271,7 @@ const commentImage = async (req, res) => {
 const updateAlbumSettings = async (req, res) => {
   try {
     const { maHopDong } = req.params;
-    const { coGioiHanAnh, soLuongAnhGioiHan, khachHangXacNhan, isSpecialCollection } = req.body;
+    const { coGioiHanAnh, soLuongAnhGioiHan, khachHangXacNhan, isSpecialCollection, chuDe } = req.body;
     
     const album = await ALBUM.findOne({ maHopDong });
     if (!album) return res.status(404).json({ status: 'error', message: 'Không tìm thấy album' });
@@ -234,6 +279,7 @@ const updateAlbumSettings = async (req, res) => {
     if (coGioiHanAnh !== undefined) album.coGioiHanAnh = coGioiHanAnh;
     if (soLuongAnhGioiHan !== undefined) album.soLuongAnhGioiHan = soLuongAnhGioiHan;
     if (khachHangXacNhan !== undefined) album.khachHangXacNhan = khachHangXacNhan;
+    if (chuDe !== undefined) album.chuDe = chuDe;
 
     await album.save();
 
@@ -297,7 +343,8 @@ const getSharedAlbum = async (req, res) => {
       status: 'success', 
       album: {
         danhSachAnhChinhSua: album.danhSachAnhChinhSua,
-        maHopDong: album.maHopDong
+        maHopDong: album.maHopDong,
+        chuDe: album.chuDe
       } 
     });
   } catch (error) {
