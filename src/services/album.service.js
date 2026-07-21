@@ -106,7 +106,7 @@ const processImagesInBackground = async (albumId, folderIdOrLink, loaiAnh) => {
       files = photoUrls.map((url, index) => ({
         id: url.split('/').pop(),
         name: filenames[index] || `Photo_${index + 1}.jpg`,
-        urlGoc: `${url}=w2048-h2048`,
+        urlGoc: `${url}=s0`,
         urlNen: `${url}=w1000`
       }));
     } else {
@@ -353,17 +353,96 @@ const getSharedAlbum = async (req, res) => {
     const album = await ALBUM.findOne({ shareLink });
     if (!album) return res.status(404).json({ status: 'error', message: 'Link chia sẻ không hợp lệ hoặc không tồn tại' });
     
+    // Lấy tên khách hàng từ hợp đồng
+    const hopDong = await HOPDONG.findOne({ maHopDong: album.maHopDong }).populate('khachHang1', 'tenKhachHang').populate('khachHang2', 'tenKhachHang');
+    let tenKhachHang = '';
+    if (hopDong) {
+      const names = [];
+      if (hopDong.khachHang1 && hopDong.khachHang1.tenKhachHang) names.push(hopDong.khachHang1.tenKhachHang);
+      if (hopDong.khachHang2 && hopDong.khachHang2.tenKhachHang) names.push(hopDong.khachHang2.tenKhachHang);
+      tenKhachHang = names.join(' & ');
+    }
+
     // Chỉ trả về ảnh đã chỉnh sửa
     return res.status(200).json({ 
       status: 'success', 
       album: {
         danhSachAnhChinhSua: album.danhSachAnhChinhSua,
         maHopDong: album.maHopDong,
-        chuDe: album.chuDe
+        chuDe: album.chuDe,
+        tenKhachHang: tenKhachHang
       } 
     });
   } catch (error) {
     return res.status(500).json({ status: 'error', message: 'Lỗi server' });
+  }
+};
+
+const getSharedAlbumSeo = async (req, res) => {
+  try {
+    const { shareLink } = req.params;
+    const album = await ALBUM.findOne({ shareLink });
+    if (!album) {
+      return res.status(404).send('Link chia sẻ không hợp lệ hoặc không tồn tại');
+    }
+
+    // Lấy tên khách hàng từ hợp đồng
+    const hopDong = await HOPDONG.findOne({ maHopDong: album.maHopDong }).populate('khachHang1', 'tenKhachHang').populate('khachHang2', 'tenKhachHang');
+    let tenKhachHang = '';
+    if (hopDong) {
+      const names = [];
+      if (hopDong.khachHang1 && hopDong.khachHang1.tenKhachHang) names.push(hopDong.khachHang1.tenKhachHang);
+      if (hopDong.khachHang2 && hopDong.khachHang2.tenKhachHang) names.push(hopDong.khachHang2.tenKhachHang);
+      tenKhachHang = names.join(' & ');
+    }
+
+    const chuDe = album.chuDe || 'Album ảnh cưới';
+    const clientNameText = tenKhachHang ? ` - Khách hàng: ${tenKhachHang}` : '';
+    const description = `Chủ đề: ${chuDe}${clientNameText}`;
+    const title = 'Long Wedding Studio - Đẳng cấp & Sang trọng';
+
+    // Lấy ảnh đầu tiên trong danh mục chỉnh sửa để hiển thị xem trước
+    let imageUrl = 'https://longwedding.vn/logo192.png';
+    if (album.danhSachAnhChinhSua && album.danhSachAnhChinhSua.length > 0) {
+      imageUrl = album.danhSachAnhChinhSua[0].urlNen || imageUrl;
+    }
+
+    const html = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>${title}</title>
+  <meta name="description" content="${description}">
+  
+  <!-- Open Graph / Facebook / Zalo -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://longwedding.vn/shared-album/${shareLink}">
+  <meta property="og:title" content="${title}">
+  <meta property="og:description" content="${description}">
+  <meta property="og:image" content="${imageUrl}">
+
+  <!-- Twitter -->
+  <meta property="twitter:card" content="summary_large_image">
+  <meta property="twitter:url" content="https://longwedding.vn/shared-album/${shareLink}">
+  <meta property="twitter:title" content="${title}">
+  <meta property="twitter:description" content="${description}">
+  <meta property="twitter:image" content="${imageUrl}">
+
+  <!-- Redirect to main React app -->
+  <script>
+    window.location.href = "https://longwedding.vn/shared-album/${shareLink}";
+  </script>
+</head>
+<body>
+  <p>Đang chuyển hướng đến album của ${tenKhachHang || 'Khách hàng'}...</p>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    return res.status(200).send(html);
+  } catch (error) {
+    console.error('Lỗi getSharedAlbumSeo:', error);
+    return res.status(500).send('Lỗi máy chủ nội bộ');
   }
 };
 
@@ -414,5 +493,6 @@ module.exports = {
   completeSelection,
   generateShareLink,
   getSharedAlbum,
+  getSharedAlbumSeo,
   convertDriveToBase64
 };

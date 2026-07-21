@@ -18,6 +18,7 @@ router.post('/customer/:publicLink/share', authMiddleware, albumService.generate
 
 // API Public (Không cần đăng nhập)
 router.get('/public/share/:shareLink', albumService.getSharedAlbum);
+router.get('/public/share-seo/:shareLink', albumService.getSharedAlbumSeo);
 router.post('/download-base64', albumService.convertDriveToBase64);
 
 module.exports = router;
