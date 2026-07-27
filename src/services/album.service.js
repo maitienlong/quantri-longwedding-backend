@@ -205,11 +205,17 @@ const getAdminAlbumDetail = async (req, res) => {
       if (driveLink) {
         const loaiAnh = hopDong?.linkAnhChinhSua ? 'chinhSua' : 'goc';
         const publicLink = crypto.randomBytes(8).toString('hex');
-        album = new ALBUM({ maHopDong, driveLink, publicLink, trangThai: 'Đang xử lý', danhSachAnh: [] });
+        const shareLink = crypto.randomBytes(6).toString('hex');
+        album = new ALBUM({ maHopDong, driveLink, publicLink, shareLink, trangThai: 'Đang xử lý', danhSachAnh: [] });
         await album.save();
 
         processImagesInBackground(album._id, driveLink, loaiAnh).catch(err => console.error("Lỗi auto sync background:", err));
       }
+    }
+
+    if (album && !album.shareLink) {
+      album.shareLink = crypto.randomBytes(6).toString('hex');
+      await album.save();
     }
 
     if (!album) return res.status(404).json({ status: 'error', message: 'Không tìm thấy album' });
