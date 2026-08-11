@@ -143,17 +143,25 @@ const processImagesInBackground = async (albumId, folderIdOrLink, loaiAnh) => {
       return;
     }
 
+    const existingPhotosMap = new Map();
+    const currentList = loaiAnh === 'goc' ? (album.danhSachAnh || []) : (album.danhSachAnhChinhSua || []);
+    currentList.forEach(p => {
+      if (p.idDrive) existingPhotosMap.set(p.idDrive, p);
+      if (p.tenFile) existingPhotosMap.set(p.tenFile, p);
+    });
+
     const newPhotos = [];
 
     for (let file of files) {
       try {
+        const existing = existingPhotosMap.get(file.id) || existingPhotosMap.get(file.name);
         newPhotos.push({
           idDrive: file.id,
           tenFile: file.name,
           urlGoc: file.urlGoc,
           urlNen: file.urlNen,
-          isHearted: false,
-          comments: []
+          isHearted: existing ? Boolean(existing.isHearted) : false,
+          comments: existing ? (existing.comments || []) : []
         });
 
       } catch (err) {

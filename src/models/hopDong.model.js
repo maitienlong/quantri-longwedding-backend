@@ -24,6 +24,7 @@ const cartItemSchema = new mongoose.Schema({
   loaiDichVu: { type: Number },
   soLuong: { type: Number, min: 1 },
   donGia: { type: Number }, // Giá tại thời điểm ký
+  giamGiaDichVu: { type: Number, default: 0 }, // Giảm giá riêng cho từng dịch vụ
   thanhTien: { type: Number },
 
   // New service parameters
