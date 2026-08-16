@@ -372,8 +372,8 @@ async function getQrInfo(req, res) {
         const cleanMa = maHopDong.replace(/[^A-Z0-9]/gi, '').toUpperCase();
         const transferContent = sessionCode ? `${cleanMa} ${sessionCode}` : cleanMa;
 
-        const vietQrUrl = `https://img.vietqr.io/image/${config.bankName}-${config.accountNumber}-compact2.png?amount=${amount}&addInfo=${encodeURIComponent(transferContent)}&accountName=${encodeURIComponent(config.accountName)}`;
-        const sepayQrUrl = `https://qr.sepay.vn/img?bank=${config.bankName}&acc=${config.accountNumber}&template=compact&amount=${amount}&des=${encodeURIComponent(transferContent)}`;
+        const vietQrUrl = `https://img.vietqr.io/image/${config.bankName}-${config.accountNumber}-qr_only.png?amount=${amount}&addInfo=${encodeURIComponent(transferContent)}&accountName=${encodeURIComponent(config.accountName)}`;
+        const sepayQrUrl = `https://qr.sepay.vn/img?bank=${config.bankName}&acc=${config.accountNumber}&template=qr_only&amount=${amount}&des=${encodeURIComponent(transferContent)}`;
 
         return res.status(200).json({
             success: true,

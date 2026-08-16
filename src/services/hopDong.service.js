@@ -198,6 +198,12 @@ async function update(req, res) {
 
             // Recalculate total paid
             const khachHangDaThanhToan = cacLuotThanhToan.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+            // Validate: If cart was modified, contract total after discount must not be less than the amount already paid
+            if (gioHang !== undefined && khachHangDaThanhToan > 0 && tongGiaTriSauGiam < khachHangDaThanhToan) {
+                return error(res, `Không thể xóa/cập nhật giỏ hàng vì tổng tiền hợp đồng (${tongGiaTriSauGiam.toLocaleString("vi-VN")} đ) nhỏ hơn số tiền khách hàng đã thanh toán (${khachHangDaThanhToan.toLocaleString("vi-VN")} đ)!`);
+            }
+
             const conLai = Math.max(0, tongGiaTriSauGiam - khachHangDaThanhToan);
 
             hopDong.thanhToan = {
@@ -241,22 +247,57 @@ async function update(req, res) {
 
 async function remove(req, res) {
     try {
-        const maHopDong = req.body.maHopDong || req.query.maHopDong || req.body;
+        const maHopDong = req.body?.maHopDong || req.query?.maHopDong || (typeof req.body === "string" ? req.body : req.body?.id);
         if (!maHopDong) {
             return error(res, "Thiếu mã hợp đồng để xóa");
         }
-        const deletedHD = await HopDong.findOneAndDelete({ maHopDong: maHopDong });
 
-        if (!deletedHD) {
+        const hopDong = await HopDong.findOne({ maHopDong: maHopDong });
+        if (!hopDong) {
             return error(res, "Không tìm thấy hợp đồng để xóa");
         }
 
-        // Cũng xóa cả lịch soạn đồ đi kèm nếu có
+        // 1. Kiểm tra hợp đồng đã có thanh toán
+        const daThanhToan = Number(hopDong.thanhToan?.khachHangDaThanhToan) || 0;
+        const cacLuotThanhToan = hopDong.thanhToan?.cacLuotThanhToan || [];
+        if (daThanhToan > 0 || (Array.isArray(cacLuotThanhToan) && cacLuotThanhToan.length > 0)) {
+            return error(
+                res,
+                `Không thể xóa hợp đồng vì đã có phát sinh thanh toán (${daThanhToan > 0 ? daThanhToan.toLocaleString("vi-VN") + " đ" : "có lịch sử thanh toán"})!`
+            );
+        }
+
+        // 2. Kiểm tra phiếu thuê đồ đang cho thuê / đang mượn
+        const LichSoanDo = require("../models/lichSoanDo.model");
+        const activeRental = await LichSoanDo.findOne({
+            $or: [{ maHopDong: maHopDong }, { hopDongId: hopDong._id }],
+            trangThai: { $in: ["Đang mượn", "Đang thuê", "Đang cho thuê"] }
+        });
+
+        const trangThaiSoanDoEmbedded = hopDong.soanDo?.trangThai;
+        const isEmbeddedRenting = ["Đang mượn", "Đang thuê", "Đang cho thuê"].includes(trangThaiSoanDoEmbedded);
+
+        if (activeRental || isEmbeddedRenting) {
+            return error(
+                res,
+                "Không thể xóa hợp đồng vì đang có phiếu thuê đồ ở trạng thái đang cho thuê/mượn!"
+            );
+        }
+
+        const deletedHD = await HopDong.findOneAndDelete({ maHopDong: maHopDong });
+
+        // Xóa lịch soạn đồ đi kèm nếu có (khi ở trạng thái Chưa mượn / Đã trả)
         try {
-            const LichSoanDo = require("../models/lichSoanDo.model");
-            await LichSoanDo.findOneAndDelete({ maHopDong: maHopDong });
+            await LichSoanDo.deleteMany({ $or: [{ maHopDong: maHopDong }, { hopDongId: hopDong._id }] });
         } catch (e) {
             console.error("Lỗi khi xóa lịch soạn đồ đi kèm:", e);
+        }
+
+        // Xóa album đi kèm nếu có
+        try {
+            await Album.findOneAndDelete({ maHopDong: maHopDong });
+        } catch (e) {
+            console.error("Lỗi khi xóa album đi kèm:", e);
         }
 
         console.log("Đã xóa hợp đồng:", deletedHD.maHopDong);
