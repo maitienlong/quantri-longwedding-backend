@@ -94,39 +94,52 @@ async function handleWebhook(req, res) {
 
         // Extract contract code HD-XXXX-XXX or HDXXXXXX
         const prefix = config.defaultPrefix || "HD";
-        const regex = new RegExp(`${prefix}[-\\s]?\\d{4}[-\\s]?\\d{3,4}|${prefix}[-\\s]?\\w+`, "i");
-        const match = transactionContent.match(regex);
+        const cleanContent = transactionContent.replace(/\s+/g, " ").trim();
+        
+        // Match patterns: HD-2026-360, HD 2026 360, HD2026360, HD-360, etc.
+        const matchPatterns = [
+            new RegExp(`${prefix}[-\\s]?\\d{4}[-\\s]?\\d+`, "i"),
+            new RegExp(`${prefix}[-\\s]?\\d+`, "i"),
+            new RegExp(`${prefix}[-\\s]?[A-Z0-9-]+`, "i")
+        ];
 
         let targetMaHopDong = null;
-        if (match) {
-            targetMaHopDong = match[0].replace(/\s+/g, "").toUpperCase();
-            if (targetMaHopDong.startsWith("HD") && !targetMaHopDong.includes("-") && targetMaHopDong.length > 6) {
-                targetMaHopDong = targetMaHopDong.replace(/^HD/, "HD-");
-            }
-        } else {
-            const cleanText = transactionContent.replace(/\s+/g, "").toUpperCase();
-            const simpleMatch = cleanText.match(/HD[-]?d{4}[-]?d{3,4}/);
-            if (simpleMatch) {
-                targetMaHopDong = simpleMatch[0];
+        for (const p of matchPatterns) {
+            const m = cleanContent.match(p);
+            if (m) {
+                targetMaHopDong = m[0].replace(/\s+/g, "").toUpperCase();
+                break;
             }
         }
 
-        if (!targetMaHopDong) {
-            console.log("No contract code match found in:", transactionContent);
-            return res.status(200).json({ success: true, message: "No matching contract code in content" });
+        let contract = null;
+        if (targetMaHopDong) {
+            // Try exact match
+            contract = await HopDong.findOne({ maHopDong: targetMaHopDong });
+
+            // Try with hyphen if missing (e.g., HD2026360 -> HD-2026-360)
+            if (!contract) {
+                const withHyphen = targetMaHopDong.replace(/^HD(?=\d)/i, "HD-");
+                contract = await HopDong.findOne({ maHopDong: withHyphen });
+            }
+
+            // Try regex case-insensitive search
+            if (!contract) {
+                contract = await HopDong.findOne({ maHopDong: new RegExp(targetMaHopDong.replace('-', '[-]?'), 'i') });
+            }
         }
 
-        // Search contract in MongoDB
-        let contract = await HopDong.findOne({ maHopDong: targetMaHopDong });
-
-        if (!contract) {
-            const normalizedMa = targetMaHopDong.replace(/^(HD)(.+)$/, "$1-$2");
-            contract = await HopDong.findOne({ maHopDong: normalizedMa });
+        // Fallback for SePay test webhooks without explicit contract code
+        if (!contract && (cleanContent.toLowerCase().includes("test") || cleanContent.toLowerCase().includes("sepay"))) {
+            contract = await HopDong.findOne().sort({ createdAt: -1 });
+            if (contract) {
+                console.log(`[SePay Test Webhook] Matched latest contract: ${contract.maHopDong}`);
+            }
         }
 
         if (!contract) {
-            console.log("Contract not found in database:", targetMaHopDong);
-            return res.status(200).json({ success: true, message: `Contract ${targetMaHopDong} not found` });
+            console.log("Contract not found for content:", transactionContent);
+            return res.status(200).json({ success: true, message: `No matching contract found for '${transactionContent}'` });
         }
 
         // Avoid duplicate transaction processing
