@@ -29,7 +29,6 @@ function formatICTDateTime(date) {
 }
 
 async function create(req, res) {
-
     try {
         // Kiểm tra trùng lịch chụp hình (khoảng cách dưới 3 tiếng)
         if (req.body.cacNgay?.ngayChup) {
@@ -152,7 +151,23 @@ async function update(req, res) {
         if (!hopDong) return error(res, "Không tìm thấy hợp đồng");
 
         if (isSpecialCollection !== undefined) hopDong.isSpecialCollection = isSpecialCollection;
-        if (gioHang !== undefined) hopDong.gioHang = gioHang;
+        if (gioHang !== undefined) {
+            hopDong.gioHang = Array.isArray(gioHang) ? gioHang.map(item => {
+                const donGia = parseFloat(item.donGia?.toString().replace(/[^0-9.-]+/g, "") || item.giaChoThueDichVu?.toString().replace(/[^0-9.-]+/g, "") || 0);
+                const soLuong = Math.max(1, Number(item.soLuong) || 1);
+                const giamGiaDichVu = Math.max(0, Number(item.giamGiaDichVu) || 0);
+                const thanhTien = Math.max(0, (donGia * soLuong) - giamGiaDichVu);
+                return {
+                    ...item,
+                    dichVu: item.dichVu?._id || item.dichVu || item._id,
+                    donGia,
+                    soLuong,
+                    giamGiaDichVu,
+                    thanhTien,
+                    tenDichVuSnapshot: item.tenDichVuSnapshot || item.tenDichVu || ""
+                };
+            }) : [];
+        }
         if (cacNgay !== undefined) {
             const oldNgayChuyen = hopDong.cacNgay?.ngayChuyenInAnh;
             hopDong.cacNgay = cacNgay;
@@ -176,16 +191,14 @@ async function update(req, res) {
             const currentThanhToan = hopDong.thanhToan || {};
             const incomingThanhToan = thanhToan || {};
 
-            const giamGia = incomingThanhToan.giamGia !== undefined ? incomingThanhToan.giamGia : (currentThanhToan.giamGia || 0);
-            const loaiGiamGia = incomingThanhToan.loaiGiamGia !== undefined ? incomingThanhToan.loaiGiamGia : (currentThanhToan.loaiGiamGia || 0);
+            const giamGia = incomingThanhToan.giamGia !== undefined ? Number(incomingThanhToan.giamGia) || 0 : (currentThanhToan.giamGia || 0);
+            const loaiGiamGia = incomingThanhToan.loaiGiamGia !== undefined ? Number(incomingThanhToan.loaiGiamGia) || 0 : (currentThanhToan.loaiGiamGia || 0);
             const cacLuotThanhToan = incomingThanhToan.cacLuotThanhToan !== undefined ? incomingThanhToan.cacLuotThanhToan : (currentThanhToan.cacLuotThanhToan || []);
 
             // Recalculate totals from active cart items
             const activeGioHang = hopDong.gioHang || [];
             const tongGiaTri = activeGioHang.reduce((sum, item) => {
-                const price = parseFloat(item.donGia?.toString().replace(/[^0-9.-]+/g, "") || item.giaChoThueDichVu?.toString().replace(/[^0-9.-]+/g, "") || 0);
-                const discountItem = parseFloat(item.giamGiaDichVu || 0);
-                return sum + Math.max(0, (price * (item.soLuong || 0)) - discountItem);
+                return sum + (Number(item.thanhTien) || 0);
             }, 0);
 
             let tongGiaTriSauGiam = tongGiaTri;
@@ -201,7 +214,7 @@ async function update(req, res) {
 
             // Validate: If cart was modified, contract total after discount must not be less than the amount already paid
             if (gioHang !== undefined && khachHangDaThanhToan > 0 && tongGiaTriSauGiam < khachHangDaThanhToan) {
-                return error(res, `Không thể xóa/cập nhật giỏ hàng vì tổng tiền hợp đồng (${tongGiaTriSauGiam.toLocaleString("vi-VN")} đ) nhỏ hơn số tiền khách hàng đã thanh toán (${khachHangDaThanhToan.toLocaleString("vi-VN")} đ)!`);
+                return error(res, `Không thể xóa/giảm sản phẩm vì tổng tiền hợp đồng (${tongGiaTriSauGiam.toLocaleString("vi-VN")} đ) sẽ nhỏ hơn số tiền khách hàng đã thanh toán (${khachHangDaThanhToan.toLocaleString("vi-VN")} đ)!`);
             }
 
             const conLai = Math.max(0, tongGiaTriSauGiam - khachHangDaThanhToan);
