@@ -117,40 +117,65 @@ async function handleWebhook(req, res) {
             return res.status(200).json({ success: true, message: "No contract code or valid amount found" });
         }
 
-        // Extract contract code HD-XXXX-XXX or HDXXXXXX or HD2026470
+        // Extract contract code HD + "6 SỐ CUỐI"
         const prefix = config.defaultPrefix || "HD";
         const cleanContent = transactionContent.replace(/\s+/g, " ").trim();
         
-        const regex = new RegExp(`${prefix}[-\\s]?\\d{4}[-\\s]?\\d+|${prefix}[-\\s]?\\d+`, "i");
+        // Match HD (or configured prefix) followed by digits/separators
+        const regex = new RegExp(`(?:${prefix})[-\\s]?(\\d[\\d-\\s]*)`, "i");
         const match = cleanContent.match(regex);
 
         let contract = null;
         let targetMaHopDong = null;
 
         if (match) {
-            const rawCode = match[0].toUpperCase().replace(/\s+/g, "");
-            targetMaHopDong = rawCode;
+            const rawDigits = match[1].replace(/\D/g, "");
+            // Extract 6 last digits
+            const last6Digits = rawDigits.length >= 6 ? rawDigits.slice(-6) : rawDigits;
+            const code6 = `${prefix}${last6Digits}`;
+            const codeFull = `${prefix}${rawDigits}`;
+
+            targetMaHopDong = code6;
 
             let year = "";
-            let seqNum = rawCode.replace(/^HD/i, "");
-
-            const match4DigitYear = rawCode.match(/^HD(\d{4})(\d+)$/i);
-            if (match4DigitYear) {
-                year = match4DigitYear[1];
-                seqNum = match4DigitYear[2];
+            let seqNum = rawDigits;
+            if (rawDigits.length >= 7) {
+                year = rawDigits.substring(0, 4);
+                seqNum = rawDigits.substring(4);
             }
-
             const cleanSeqNum = seqNum.replace(/^0+/, "") || seqNum;
 
             const searchQuery = [
-                { maHopDong: rawCode },
-                { maHopDong: `HD-${year}-${cleanSeqNum}` },
-                { maHopDong: `HD-${cleanSeqNum}` },
-                { maHopDong: `HD${cleanSeqNum}` },
-                { maHopDong: new RegExp(`^HD[-\\s]?(${year}[-\\s]?)?0*${cleanSeqNum}$`, 'i') }
+                { maHopDong: code6 },
+                { maHopDong: codeFull },
+                { maHopDong: `${prefix}-${last6Digits}` },
+                { maHopDong: `${prefix}-${rawDigits}` },
+                { maHopDong: `${prefix}-${year}-${cleanSeqNum}` },
+                { maHopDong: `${prefix}-${cleanSeqNum}` },
+                { maHopDong: `${prefix}${cleanSeqNum}` },
+                { maHopDong: new RegExp(`^${prefix}[-\\s]?.*${last6Digits}$`, 'i') },
+                { maHopDong: new RegExp(`^${prefix}[-\\s]?.*${rawDigits}$`, 'i') }
             ];
 
+            console.log(`[SePay Webhook] Searching for contract code: HD + 6 digits (${code6}) / Full (${codeFull}) from content: '${cleanContent}'`);
             contract = await HopDong.findOne({ $or: searchQuery });
+        }
+
+        // Fallback: If no explicit HD prefix, search for 6+ digits sequence in content
+        if (!contract) {
+            const fallbackDigitsMatch = cleanContent.match(/\d{6,}/);
+            if (fallbackDigitsMatch) {
+                const rawDigits = fallbackDigitsMatch[0];
+                const last6Digits = rawDigits.slice(-6);
+                const code6 = `${prefix}${last6Digits}`;
+                const searchQuery = [
+                    { maHopDong: code6 },
+                    { maHopDong: `${prefix}-${last6Digits}` },
+                    { maHopDong: new RegExp(`^${prefix}[-\\s]?.*${last6Digits}$`, 'i') }
+                ];
+                console.log(`[SePay Webhook Fallback] Searching for contract code: ${code6} from content digits '${rawDigits}'`);
+                contract = await HopDong.findOne({ $or: searchQuery });
+            }
         }
 
         // Fallback for SePay test webhooks without explicit contract code
@@ -373,25 +398,30 @@ async function getQrInfo(req, res) {
 async function checkStatus(req, res) {
     try {
         const { maHopDong } = req.params;
-        const rawCode = maHopDong.toUpperCase().replace(/\s+/g, "");
+        const prefix = "HD";
+        const rawDigits = rawCode.replace(/^HD[-\s]?/i, "").replace(/\D/g, "");
+        const last6Digits = rawDigits.length >= 6 ? rawDigits.slice(-6) : rawDigits;
+        const code6 = `${prefix}${last6Digits}`;
+        const codeFull = `${prefix}${rawDigits}`;
 
         let year = "";
-        let seqNum = rawCode.replace(/^HD/i, "");
-
-        const match4DigitYear = rawCode.match(/^HD(\d{4})(\d+)$/i);
-        if (match4DigitYear) {
-            year = match4DigitYear[1];
-            seqNum = match4DigitYear[2];
+        let seqNum = rawDigits;
+        if (rawDigits.length >= 7) {
+            year = rawDigits.substring(0, 4);
+            seqNum = rawDigits.substring(4);
         }
-
         const cleanSeqNum = seqNum.replace(/^0+/, "") || seqNum;
 
         const searchQuery = [
             { maHopDong: rawCode },
+            { maHopDong: code6 },
+            { maHopDong: codeFull },
+            { maHopDong: `${prefix}-${last6Digits}` },
+            { maHopDong: `${prefix}-${rawDigits}` },
             { maHopDong: `HD-${year}-${cleanSeqNum}` },
             { maHopDong: `HD-${cleanSeqNum}` },
             { maHopDong: `HD${cleanSeqNum}` },
-            { maHopDong: new RegExp(`^HD[-\\s]?(${year}[-\\s]?)?0*${cleanSeqNum}$`, 'i') }
+            { maHopDong: new RegExp(`^HD[-\\s]?.*${last6Digits}$`, 'i') }
         ];
 
         const contract = await HopDong.findOne({ $or: searchQuery });
