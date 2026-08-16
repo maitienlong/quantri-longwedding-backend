@@ -1,5 +1,6 @@
 const express = require('express');
 const app = express();
+const sepayRouter = require('./routes/sepay.router');
 const bodyParser = require('body-parser');
 var cors = require('cors')
 const mongoose = require('mongoose')
@@ -28,7 +29,10 @@ app.use('/api/', limiter);
 app.use('/auth/', limiter);
 
 // Body parser limits (nới rộng lên 50MB cho phép gửi payload ảnh dung lượng lớn)
-app.use(express.json({ limit: "50mb" }));
+app.use(express.json({
+  limit: "50mb",
+  verify: (req, res, buf) => { req.rawBody = buf; }
+}));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // CORS configuration
@@ -70,6 +74,7 @@ const logRoutes = require("./routes/log.router");
 const visitorsRoutes = require("./routes/visitors.router");
 const loaiHopDongRoutes = require("./routes/loaiHopDong.router");
 const thiduaRoutes = require("./routes/thidua.router");
+const sepayRoutes = require("./routes/sepay.router");
 
 app.use('/auth', authRoutes);
 app.use('/khachHang', khachHangRoutes);
@@ -79,6 +84,7 @@ app.use('/chiTieu', chiTieuRoutes);
 app.use('/lichSoanDo', lichSoanDoRoutes);
 app.use('/loaiHopDong', loaiHopDongRoutes);
 app.use('/api/thi-dua', thiduaRoutes);
+app.use('/api/sepay', sepayRoutes);
 app.use('/api/website', websiteRoutes);
 app.use('/api/album', albumRoutes);
 app.use('/api/log', logRoutes);

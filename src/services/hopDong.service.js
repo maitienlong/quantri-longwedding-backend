@@ -172,27 +172,64 @@ async function update(req, res) {
         if (linkAnhChinhSua !== undefined) hopDong.linkAnhChinhSua = linkAnhChinhSua;
         if (danhSachAnhIn !== undefined) hopDong.danhSachAnhIn = danhSachAnhIn;
 
-        if (thanhToan !== undefined) {
-            hopDong.thanhToan = thanhToan;
+        if (thanhToan !== undefined || gioHang !== undefined) {
+            const currentThanhToan = hopDong.thanhToan || {};
+            const incomingThanhToan = thanhToan || {};
 
-            if (thanhToan.cacLuotThanhToan && thanhToan.cacLuotThanhToan.length > 0) {
-                for (let payment of thanhToan.cacLuotThanhToan) {
-                    const existing = await Payment.findOne({ id: payment.id });
-                    if (!existing) {
-                        const newPayment = new Payment({
-                            id: payment.id,
-                            khachHang: payment.khachHang || "Khách hàng",
-                            amount: Number(payment.amount) || 0,
-                            date: payment.date ? new Date(payment.date) : new Date(),
-                            method: payment.method || "Tiền mặt",
-                            noiDung: payment.noiDung || "Thanh toán thêm"
-                        });
-                        await newPayment.save();
+            const giamGia = incomingThanhToan.giamGia !== undefined ? incomingThanhToan.giamGia : (currentThanhToan.giamGia || 0);
+            const loaiGiamGia = incomingThanhToan.loaiGiamGia !== undefined ? incomingThanhToan.loaiGiamGia : (currentThanhToan.loaiGiamGia || 0);
+            const cacLuotThanhToan = incomingThanhToan.cacLuotThanhToan !== undefined ? incomingThanhToan.cacLuotThanhToan : (currentThanhToan.cacLuotThanhToan || []);
+
+            // Recalculate totals from active cart items
+            const activeGioHang = hopDong.gioHang || [];
+            const tongGiaTri = activeGioHang.reduce((sum, item) => {
+                const price = parseFloat(item.donGia?.toString().replace(/[^0-9.-]+/g, "") || item.giaChoThueDichVu?.toString().replace(/[^0-9.-]+/g, "") || 0);
+                const discountItem = parseFloat(item.giamGiaDichVu || 0);
+                return sum + Math.max(0, (price * (item.soLuong || 0)) - discountItem);
+            }, 0);
+
+            let tongGiaTriSauGiam = tongGiaTri;
+            if (Number(loaiGiamGia) === 1) {
+                tongGiaTriSauGiam = tongGiaTri - (tongGiaTri * (giamGia / 100));
+            } else {
+                tongGiaTriSauGiam = tongGiaTri - giamGia;
+            }
+            if (tongGiaTriSauGiam < 0) tongGiaTriSauGiam = 0;
+
+            // Recalculate total paid
+            const khachHangDaThanhToan = cacLuotThanhToan.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+            const conLai = Math.max(0, tongGiaTriSauGiam - khachHangDaThanhToan);
+
+            hopDong.thanhToan = {
+                tongGiaTri,
+                giamGia,
+                loaiGiamGia,
+                tongGiaTriSauGiam,
+                khachHangDaThanhToan,
+                conLai,
+                cacLuotThanhToan
+            };
+
+            // Save new payments to Payment collection
+            if (cacLuotThanhToan && cacLuotThanhToan.length > 0) {
+                for (let payment of cacLuotThanhToan) {
+                    if (payment.id) {
+                        const existing = await Payment.findOne({ id: payment.id });
+                        if (!existing) {
+                            const newPayment = new Payment({
+                                id: payment.id,
+                                khachHang: payment.khachHang || "Khách hàng",
+                                amount: Number(payment.amount) || 0,
+                                date: payment.date ? new Date(payment.date) : new Date(),
+                                method: payment.method || "Tiền mặt",
+                                noiDung: payment.noiDung || "Thanh toán"
+                            });
+                            await newPayment.save();
+                        }
                     }
                 }
             }
         }
-
         await hopDong.save();
 
         return success(res, "Đã cập nhật thành công", hopDong);
