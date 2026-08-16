@@ -1,3 +1,5 @@
+const { notifyPaymentSuccess } = require("../socket");
+const recentNotifications = [];
 const crypto = require("crypto");
 const SepayConfig = require("../models/sepayConfig.model");
 const HopDong = require("../models/hopDong.model");
@@ -11,42 +13,67 @@ async function getOrCreateConfig() {
         config = await SepayConfig.create({
             bankName: process.env.SEPAY_BANK_NAME || "MBBank",
             accountNumber: process.env.SEPAY_ACCOUNT_NUMBER || "9990187764519",
-            accountName: process.env.SEPAY_ACCOUNT_NAME || "LONG WEDDING",
-            secretKey: process.env.SEPAY_WEBHOOK_SECRET || "whsec_kY4YMHH5aqMUcrHSEeqj4wQpov6Vhx0N",
+            accountName: process.env.SEPAY_ACCOUNT_NAME || "MAI TIEN LONG",
+            merchantId: process.env.SEPAY_MERCHANT_ID || "SP-LIVE-AV3A6B74",
+            webhookSecret: process.env.SEPAY_WEBHOOK_SECRET || "whsec_kY4YMHH5aqMUcrHSEeqj4wQpov6Vhx0N",
+            apiKey: process.env.SEPAY_API_KEY || "",
+            isAutoApprove: true,
             defaultPrefix: "HD"
         });
     }
     return config;
 }
 
-// HMAC-SHA256 Signature Verification
-function verifyHmacSignature(rawBody, signatureHeader, timestampHeader, secretKey) {
-    if (!signatureHeader || !timestampHeader || !secretKey) return false;
-    try {
-        const expectedSigPart = signatureHeader.startsWith("sha256=") ? signatureHeader.substring(7) : signatureHeader;
-        const payloadToSign = `${timestampHeader}.${rawBody.toString('utf8')}`;
-        const computedSig = crypto.createHmac("sha256", secretKey).update(payloadToSign).digest("hex");
-        return crypto.timingSafeEqual(Buffer.from(computedSig), Buffer.from(expectedSigPart));
-    } catch (err) {
-        console.error("HMAC verification error:", err.message);
-        return false;
+// Verify HMAC SHA256 Signature
+function verifyHmacSignature(rawBody, signatureHeader, timestampHeader, secret) {
+    if (!signatureHeader || !secret) return false;
+    
+    const timestampStr = timestampHeader ? timestampHeader.toString().trim() : "";
+    const timestampNum = Number(timestampStr);
+    
+    if (timestampNum && !isNaN(timestampNum)) {
+        if (Math.abs(Date.now() / 1000 - timestampNum) > 300) {
+            console.warn("⚠️ Webhook timestamp expired (> 300s). Replay attack prevented.");
+            return false;
+        }
     }
+
+    const rawStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody || '');
+    const payload = timestampStr ? `${timestampStr}.${rawStr}` : rawStr;
+
+    const computedHex = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+    const expectedWithPrefix = `sha256=${computedHex}`;
+    const receivedSig = signatureHeader.toString().trim();
+
+    try {
+        const sigBuf = Buffer.from(receivedSig.toLowerCase());
+        const expBuf = Buffer.from(expectedWithPrefix.toLowerCase());
+        const rawExpBuf = Buffer.from(computedHex.toLowerCase());
+
+        if (sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf)) {
+            return true;
+        }
+        if (sigBuf.length === rawExpBuf.length && crypto.timingSafeEqual(sigBuf, rawExpBuf)) {
+            return true;
+        }
+    } catch (err) {
+        console.error("Error in timingSafeEqual comparison:", err);
+    }
+
+    return receivedSig.toLowerCase() === expectedWithPrefix.toLowerCase() || receivedSig.toLowerCase() === computedHex.toLowerCase();
 }
 
-// 1. Handle Webhook from SePay
+// 1. Handle Webhook from SePay (POST /api/sepay/webhook)
 async function handleWebhook(req, res) {
     try {
         console.log("=== SEPAY WEBHOOK RECEIVED ===", req.body);
         const config = await getOrCreateConfig();
+        const webhookSecret = config.webhookSecret;
+        const signatureHeader = req.headers["x-sepay-signature"] || req.headers["X-SePay-Signature"];
+        const timestampHeader = req.headers["x-sepay-timestamp"] || req.headers["X-SePay-Timestamp"];
+        const authHeader = req.headers["authorization"] || req.headers["Authorization"];
 
-        // Security check: HMAC-SHA256 signature or API key authorization
-        const signatureHeader = req.headers["x-sepay-signature"];
-        const timestampHeader = req.headers["x-sepay-timestamp"];
-        const authHeader = req.headers["authorization"];
-
-        const webhookSecret = process.env.SEPAY_WEBHOOK_SECRET || config.secretKey || "whsec_kY4YMHH5aqMUcrHSEeqj4wQpov6Vhx0N";
         let isValidSig = false;
-
         if (signatureHeader && timestampHeader && req.rawBody) {
             isValidSig = verifyHmacSignature(req.rawBody, signatureHeader, timestampHeader, webhookSecret);
         }
@@ -59,10 +86,9 @@ async function handleWebhook(req, res) {
             }
         }
 
-        // If secret key / API key configured but fails verification
-        if (webhookSecret && !isValidSig && config.apiKey && !isValidKey) {
-            console.warn("⚠️ Webhook verification failed. Unauthorized payload.");
-            return res.status(401).json({ success: false, message: "Unauthorized Webhook payload" });
+        if (webhookSecret && signatureHeader && !isValidSig) {
+            console.warn("⚠️ Webhook verification failed. Invalid signature.");
+            return res.status(401).json({ success: false, message: "Invalid signature" });
         }
 
         const {
@@ -78,9 +104,8 @@ async function handleWebhook(req, res) {
             subAccount,
             referenceCode,
             description
-        } = req.body;
+        } = req.body || {};
 
-        // Process only incoming transfers ("in")
         if (transferType && transferType !== "in") {
             return res.status(200).json({ success: true, message: "Ignored non-incoming transaction" });
         }
@@ -92,41 +117,40 @@ async function handleWebhook(req, res) {
             return res.status(200).json({ success: true, message: "No contract code or valid amount found" });
         }
 
-        // Extract contract code HD-XXXX-XXX or HDXXXXXX
+        // Extract contract code HD-XXXX-XXX or HDXXXXXX or HD2026470
         const prefix = config.defaultPrefix || "HD";
         const cleanContent = transactionContent.replace(/\s+/g, " ").trim();
         
-        // Match patterns: HD-2026-360, HD 2026 360, HD2026360, HD-360, etc.
-        const matchPatterns = [
-            new RegExp(`${prefix}[-\\s]?\\d{4}[-\\s]?\\d+`, "i"),
-            new RegExp(`${prefix}[-\\s]?\\d+`, "i"),
-            new RegExp(`${prefix}[-\\s]?[A-Z0-9-]+`, "i")
-        ];
-
-        let targetMaHopDong = null;
-        for (const p of matchPatterns) {
-            const m = cleanContent.match(p);
-            if (m) {
-                targetMaHopDong = m[0].replace(/\s+/g, "").toUpperCase();
-                break;
-            }
-        }
+        const regex = new RegExp(`${prefix}[-\\s]?\\d{4}[-\\s]?\\d+|${prefix}[-\\s]?\\d+`, "i");
+        const match = cleanContent.match(regex);
 
         let contract = null;
-        if (targetMaHopDong) {
-            // Try exact match
-            contract = await HopDong.findOne({ maHopDong: targetMaHopDong });
+        let targetMaHopDong = null;
 
-            // Try with hyphen if missing (e.g., HD2026360 -> HD-2026-360)
-            if (!contract) {
-                const withHyphen = targetMaHopDong.replace(/^HD(?=\d)/i, "HD-");
-                contract = await HopDong.findOne({ maHopDong: withHyphen });
+        if (match) {
+            const rawCode = match[0].toUpperCase().replace(/\s+/g, "");
+            targetMaHopDong = rawCode;
+
+            let year = "";
+            let seqNum = rawCode.replace(/^HD/i, "");
+
+            const match4DigitYear = rawCode.match(/^HD(\d{4})(\d+)$/i);
+            if (match4DigitYear) {
+                year = match4DigitYear[1];
+                seqNum = match4DigitYear[2];
             }
 
-            // Try regex case-insensitive search
-            if (!contract) {
-                contract = await HopDong.findOne({ maHopDong: new RegExp(targetMaHopDong.replace('-', '[-]?'), 'i') });
-            }
+            const cleanSeqNum = seqNum.replace(/^0+/, "") || seqNum;
+
+            const searchQuery = [
+                { maHopDong: rawCode },
+                { maHopDong: `HD-${year}-${cleanSeqNum}` },
+                { maHopDong: `HD-${cleanSeqNum}` },
+                { maHopDong: `HD${cleanSeqNum}` },
+                { maHopDong: new RegExp(`^HD[-\\s]?(${year}[-\\s]?)?0*${cleanSeqNum}$`, 'i') }
+            ];
+
+            contract = await HopDong.findOne({ $or: searchQuery });
         }
 
         // Fallback for SePay test webhooks without explicit contract code
@@ -138,76 +162,99 @@ async function handleWebhook(req, res) {
         }
 
         if (!contract) {
-            console.log("Contract not found for content:", transactionContent);
-            return res.status(200).json({ success: true, message: `No matching contract found for '${transactionContent}'` });
+            console.log(`Contract not found for content: ${cleanContent}`);
+            return res.status(200).json({ success: true, message: `No matching contract found for '${cleanContent}'` });
         }
 
-        // Avoid duplicate transaction processing
-        const transactionId = `SEPAY_${id || referenceCode || Date.now()}`;
-        const cacLuotThanhToan = contract.thanhToan?.cacLuotThanhToan || [];
-        const isDuplicate = cacLuotThanhToan.some(p => p.id === transactionId || p.noiDung?.includes(`SEPAY_${id}`));
+        // Duplicate check by transaction ID
+        const existingTxId = `SEPAY_${id || Date.now()}`;
+        const alreadyProcessed = contract.thanhToan?.cacLuotThanhToan?.some(t => t.id === existingTxId || t.noiDung?.includes(existingTxId));
 
-        if (isDuplicate) {
-            console.log("Transaction already processed:", transactionId);
-            return res.status(200).json({ success: true, message: "Transaction already recorded" });
+        if (alreadyProcessed) {
+            console.log(`Transaction ${existingTxId} already processed for contract ${contract.maHopDong}`);
+            return res.status(200).json({ success: true, message: "Transaction already processed", maHopDong: contract.maHopDong });
         }
 
-        // Add new payment entry
+        // Record new payment into contract
         const newPaymentObj = {
-            id: transactionId,
+            id: existingTxId,
             khachHang: contract.khachHang1?.tenKhachHang || "Khách hàng",
             amount: amount,
-            date: transactionDate || new Date().toISOString(),
-            method: "Chuyển khoản (VietQR SePay)",
-            noiDung: `Thanh toán SePay (${gateway || 'Bank'} - STK: ${accountNumber || ''}) [${transactionId}]`
+            date: transactionDate ? new Date(transactionDate).toISOString() : new Date().toISOString(),
+            method: "Chuyển khoản (SePay VietQR)",
+            noiDung: `Chuyển khoản SePay GD#${id || ''} - ${transactionContent}`
         };
 
-        cacLuotThanhToan.push(newPaymentObj);
+        const currentPaidList = contract.thanhToan?.cacLuotThanhToan || [];
+        const updatedPaidList = [...currentPaidList, newPaymentObj];
 
-        // Recalculate contract totals
-        const gioHang = contract.gioHang || [];
-        const tongGiaTriRaw = gioHang.reduce((sum, item) => {
-            const price = parseFloat(item.donGia?.toString().replace(/[^0-9.-]+/g, "") || 0);
-            return sum + (price * (item.soLuong || 0));
+        const totalPaid = updatedPaidList.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+
+        const gioHangList = contract.danhSachDichVuDatLich || contract.danhSachDichVu || [];
+        const tongGiaTriForm = gioHangList.reduce((sum, item) => {
+            const p = parseFloat(item.donGia?.toString().replace(/[^0-9.-]+/g, "") || 0);
+            return sum + (p * (Number(item.soLuong) || 1));
         }, 0);
 
-        const giamGia = Number(contract.thanhToan?.giamGia) || 0;
-        const loaiGiamGia = contract.thanhToan?.loaiGiamGia || 0;
-        let tongGiaTriSauGiam = tongGiaTriRaw;
-        if (loaiGiamGia === 1) {
-            tongGiaTriSauGiam = Math.max(0, tongGiaTriRaw - (tongGiaTriRaw * giamGia / 100));
+        const discountValue = Number(contract.thanhToan?.giamGia) || Number(contract.giamGia) || 0;
+        const discountType = Number(contract.thanhToan?.loaiGiamGia) || 0;
+        let totalAfterDiscount = tongGiaTriForm;
+        if (discountType === 1) {
+            totalAfterDiscount = tongGiaTriForm - (tongGiaTriForm * discountValue / 100);
         } else {
-            tongGiaTriSauGiam = Math.max(0, tongGiaTriRaw - giamGia);
+            totalAfterDiscount = tongGiaTriForm - discountValue;
         }
+        totalAfterDiscount = Math.max(0, totalAfterDiscount);
 
-        const khachHangDaThanhToan = cacLuotThanhToan.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-        const conLai = Math.max(0, tongGiaTriSauGiam - khachHangDaThanhToan);
+        const khachHangDaThanhToan = totalPaid;
+        const conLai = Math.max(0, totalAfterDiscount - khachHangDaThanhToan);
+        const trangThaiThanhToan = conLai <= 0 ? "Đã thanh toán" : "Thanh toán 1 phần";
 
-        contract.thanhToan = {
-            ...contract.thanhToan,
-            tongGiaTri: tongGiaTriRaw,
-            tongGiaTriSauGiam: tongGiaTriSauGiam,
-            khachHangDaThanhToan: khachHangDaThanhToan,
-            conLai: conLai,
-            cacLuotThanhToan: cacLuotThanhToan
-        };
+        await HopDong.findByIdAndUpdate(contract._id, {
+            "thanhToan.cacLuotThanhToan": updatedPaidList,
+            "thanhToan.khachHangDaThanhToan": khachHangDaThanhToan,
+            "thanhToan.conLai": conLai,
+            "thanhToan.trangThaiThanhToan": trangThaiThanhToan
+        });
 
-        await contract.save();
-
-        // Also save to Payment collection
+        // Also record to Payment collection if model exists
         try {
             await Payment.create({
-                contractId: contract._id,
+                id: existingTxId,
+                maHopDong: contract.maHopDong,
                 amount: amount,
-                paymentMethod: "Bank Transfer (SePay)",
-                paymentDate: new Date(transactionDate || Date.now()),
-                note: `Webhook SePay Giao dịch ${id || ''}`
+                date: new Date(),
+                method: "Chuyển khoản (SePay VietQR)",
+                khachHang: contract.khachHang1?.tenKhachHang || "Khách hàng",
+                noiDung: transactionContent
             });
-        } catch (payErr) {
-            console.error("Warning: Could not save Payment model:", payErr.message);
+        } catch (e) {
+            console.warn("Warning: Could not save Payment model:", e.message);
         }
 
         console.log(`✅ Gạch nợ thành công hợp đồng ${contract.maHopDong}: Đã thanh toán ${khachHangDaThanhToan} đ | Còn lại ${conLai} đ`);
+
+        // Extract session code suffix if present (e.g. HD2026360 S8421 -> S8421)
+        const sessionCodeMatch = transactionContent.match(/S\d{4,6}/i);
+        const extractedSessionCode = sessionCodeMatch ? sessionCodeMatch[0].toUpperCase() : '';
+
+        // Broadcast WebSocket Real-time Payment Event
+        notifyPaymentSuccess({
+            sessionId: extractedSessionCode,
+            maHopDong: contract.maHopDong,
+            amount: amount,
+            khachHangDaThanhToan: khachHangDaThanhToan,
+            conLai: conLai,
+            latestPayment: newPaymentObj,
+            timestamp: Date.now()
+        });
+
+        recentNotifications.push({
+            maHopDong: contract.maHopDong,
+            amount: amount,
+            timestamp: Date.now()
+        });
+        if (recentNotifications.length > 50) recentNotifications.shift();
 
         return res.status(200).json({
             success: true,
@@ -221,101 +268,163 @@ async function handleWebhook(req, res) {
         });
     } catch (err) {
         console.error("Lỗi xử lý SePay Webhook:", err);
-        return res.status(200).json({ success: false, message: err.message });
+        return res.status(500).json({ success: false, message: err.message });
     }
 }
 
-// 2. Get Sepay Config
+// 2. Get Config (GET /api/sepay/config)
 async function getConfig(req, res) {
     try {
         const config = await getOrCreateConfig();
-        return success(res, "Lấy cấu hình SePay thành công", config);
+        return res.status(200).json({
+            success: true,
+            data: {
+                bankName: config.bankName,
+                accountNumber: config.accountNumber,
+                accountName: config.accountName,
+                merchantId: config.merchantId,
+                isAutoApprove: config.isAutoApprove,
+                defaultPrefix: config.defaultPrefix,
+                hasWebhookSecret: !!config.webhookSecret,
+                hasApiKey: !!config.apiKey
+            }
+        });
     } catch (err) {
-        return error(res, err.message);
+        console.error("Lỗi khi lấy cấu hình SePay:", err);
+        return res.status(500).json({ success: false, message: err.message });
     }
 }
 
-// 3. Update Sepay Config
+// 3. Update Config (POST /api/sepay/config)
 async function updateConfig(req, res) {
     try {
-        const { bankName, accountNumber, accountName, apiKey, secretKey, defaultPrefix } = req.body;
-        let config = await getOrCreateConfig();
+        const {
+            bankName,
+            accountNumber,
+            accountName,
+            merchantId,
+            webhookSecret,
+            apiKey,
+            isAutoApprove,
+            defaultPrefix
+        } = req.body;
+
+        let config = await SepayConfig.findOne();
+        if (!config) {
+            config = new SepayConfig();
+        }
 
         if (bankName !== undefined) config.bankName = bankName;
         if (accountNumber !== undefined) config.accountNumber = accountNumber;
         if (accountName !== undefined) config.accountName = accountName;
+        if (merchantId !== undefined) config.merchantId = merchantId;
+        if (webhookSecret !== undefined) config.webhookSecret = webhookSecret;
         if (apiKey !== undefined) config.apiKey = apiKey;
-        if (secretKey !== undefined) config.secretKey = secretKey;
+        if (isAutoApprove !== undefined) config.isAutoApprove = isAutoApprove;
         if (defaultPrefix !== undefined) config.defaultPrefix = defaultPrefix;
 
         await config.save();
-        return success(res, "Cập nhật cấu hình SePay thành công", config);
+
+        return res.status(200).json({
+            success: true,
+            message: "Cập nhật cấu hình SePay thành công",
+            data: config
+        });
     } catch (err) {
-        return error(res, err.message);
+        console.error("Lỗi khi cập nhật cấu hình SePay:", err);
+        return res.status(500).json({ success: false, message: err.message });
     }
 }
 
-// 4. Get Dynamic QR Code Info
+// 4. Get VietQR Payment Info & Image (GET /api/sepay/qr-info/:maHopDong)
 async function getQrInfo(req, res) {
     try {
         const { maHopDong } = req.params;
-        const amountQuery = req.query.amount;
-
-        const contract = await HopDong.findOne({ maHopDong });
-        if (!contract) {
-            return error(res, "Không tìm thấy hợp đồng");
-        }
-
+        const amount = Number(req.query.amount) || 0;
+        const sessionCode = req.query.sessionCode || '';
         const config = await getOrCreateConfig();
-        const khachHangDaTT = contract.thanhToan?.khachHangDaThanhToan || 0;
-        const tongGiaTri = contract.thanhToan?.tongGiaTriSauGiam || contract.thanhToan?.tongGiaTri || 0;
-        const conLai = Math.max(0, tongGiaTri - khachHangDaTT);
 
-        const amountToPay = amountQuery ? Number(amountQuery) : conLai;
-        const cleanMaHopDong = contract.maHopDong.replace(/\s+/g, "");
-        const transferContent = cleanMaHopDong;
+        const cleanMa = maHopDong.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        const transferContent = sessionCode ? `${cleanMa} ${sessionCode}` : cleanMa;
 
-        const vietQrUrl = `https://img.vietqr.io/image/${config.bankName || 'MBBank'}-${config.accountNumber || '9990187764519'}-compact2.png?amount=${amountToPay}&addInfo=${encodeURIComponent(transferContent)}&accountName=${encodeURIComponent(config.accountName || 'LONG WEDDING')}`;
-        const sepayQrUrl = `https://qr.sepay.vn/img?acc=${config.accountNumber || '9990187764519'}&bank=${config.bankName || 'MBBank'}&amount=${amountToPay}&des=${encodeURIComponent(transferContent)}`;
+        const vietQrUrl = `https://img.vietqr.io/image/${config.bankName}-${config.accountNumber}-compact2.png?amount=${amount}&addInfo=${encodeURIComponent(transferContent)}&accountName=${encodeURIComponent(config.accountName)}`;
+        const sepayQrUrl = `https://qr.sepay.vn/img?bank=${config.bankName}&acc=${config.accountNumber}&template=compact&amount=${amount}&des=${encodeURIComponent(transferContent)}`;
 
-        return success(res, "Lấy thông tin VietQR SePay thành công", {
-            maHopDong: contract.maHopDong,
-            bankName: config.bankName,
-            accountNumber: config.accountNumber,
-            accountName: config.accountName,
-            amount: amountToPay,
-            conLai: conLai,
-            transferContent: transferContent,
-            vietQrUrl: vietQrUrl,
-            sepayQrUrl: sepayQrUrl
+        return res.status(200).json({
+            success: true,
+            data: {
+                maHopDong: cleanMa,
+                bankName: config.bankName,
+                accountNumber: config.accountNumber,
+                accountName: config.accountName,
+                transferContent: transferContent,
+                amount: amount,
+                vietQrUrl: vietQrUrl,
+                sepayQrUrl: sepayQrUrl
+            }
         });
     } catch (err) {
-        return error(res, err.message);
+        console.error("Lỗi khi tạo mã QR VietQR:", err);
+        return res.status(500).json({ success: false, message: err.message });
     }
 }
 
-// 5. Check Contract Payment Status (Polling)
+// 5. Check Contract Payment Status (GET /api/sepay/check-status/:maHopDong)
 async function checkStatus(req, res) {
     try {
         const { maHopDong } = req.params;
-        const contract = await HopDong.findOne({ maHopDong });
-        if (!contract) {
-            return error(res, "Không tìm thấy hợp đồng");
+        const rawCode = maHopDong.toUpperCase().replace(/\s+/g, "");
+
+        let year = "";
+        let seqNum = rawCode.replace(/^HD/i, "");
+
+        const match4DigitYear = rawCode.match(/^HD(\d{4})(\d+)$/i);
+        if (match4DigitYear) {
+            year = match4DigitYear[1];
+            seqNum = match4DigitYear[2];
         }
 
-        const cacLuotThanhToan = contract.thanhToan?.cacLuotThanhToan || [];
-        const latestPayment = cacLuotThanhToan.length > 0 ? cacLuotThanhToan[cacLuotThanhToan.length - 1] : null;
+        const cleanSeqNum = seqNum.replace(/^0+/, "") || seqNum;
 
-        return success(res, "Kiểm tra trạng thái thành công", {
-            maHopDong: contract.maHopDong,
-            khachHangDaThanhToan: contract.thanhToan?.khachHangDaThanhToan || 0,
-            conLai: contract.thanhToan?.conLai || 0,
-            paymentCount: cacLuotThanhToan.length,
-            latestPayment: latestPayment
+        const searchQuery = [
+            { maHopDong: rawCode },
+            { maHopDong: `HD-${year}-${cleanSeqNum}` },
+            { maHopDong: `HD-${cleanSeqNum}` },
+            { maHopDong: `HD${cleanSeqNum}` },
+            { maHopDong: new RegExp(`^HD[-\\s]?(${year}[-\\s]?)?0*${cleanSeqNum}$`, 'i') }
+        ];
+
+        const contract = await HopDong.findOne({ $or: searchQuery });
+        if (!contract) {
+            return res.status(404).json({ success: false, message: "Hợp đồng không tồn tại" });
+        }
+
+        const cacLuot = contract.thanhToan?.cacLuotThanhToan || [];
+        const latestPayment = cacLuot.length > 0 ? cacLuot[cacLuot.length - 1] : null;
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                maHopDong: contract.maHopDong,
+                paymentCount: cacLuot.length,
+                khachHangDaThanhToan: contract.thanhToan?.khachHangDaThanhToan || 0,
+                conLai: contract.thanhToan?.conLai || 0,
+                trangThaiThanhToan: contract.thanhToan?.trangThaiThanhToan || "Chưa thanh toán",
+                latestPayment: latestPayment
+            }
         });
     } catch (err) {
-        return error(res, err.message);
+        console.error("Lỗi khi kiểm tra trạng thái hợp đồng:", err);
+        return res.status(500).json({ success: false, message: err.message });
     }
+}
+
+// 6. Get Recent Notifications
+async function getNotifications(req, res) {
+    return res.status(200).json({
+        success: true,
+        data: recentNotifications
+    });
 }
 
 module.exports = {
@@ -323,5 +432,6 @@ module.exports = {
     getConfig,
     updateConfig,
     getQrInfo,
-    checkStatus
+    checkStatus,
+    getNotifications
 };
