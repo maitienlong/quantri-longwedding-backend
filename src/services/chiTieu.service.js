@@ -1,4 +1,5 @@
 const ChiTieu = require("../models/chiTieu.model");
+const donViNhanTienService = require("./donViNhanTien.service");
 const { success, error } = require("../utils/response");
 
 function getICTStartOfDay() {
@@ -114,6 +115,12 @@ async function create(req, res) {
 
         await chiTieu.save();
         console.log(`Đã tạo chi tiêu: ${generatedId} với số tiền ${amount}`);
+
+        // Tự động kiểm tra và lưu đơn vị nhận tiền nếu chưa tồn tại
+        if (receiver) {
+            donViNhanTienService.ensureReceiverExists(receiver).catch(e => console.error("ensureReceiverExists error:", e.message));
+        }
+
         return success(res, "Tạo lượt chi tiêu thành công", chiTieu);
     } catch (err) {
         return error(res, err.message);
@@ -146,6 +153,12 @@ async function update(req, res) {
         }
 
         console.log(`Đã cập nhật chi tiêu: ${id}`);
+
+        // Tự động kiểm tra và lưu đơn vị nhận tiền nếu chưa tồn tại
+        if (receiver) {
+            donViNhanTienService.ensureReceiverExists(receiver).catch(e => console.error("ensureReceiverExists error:", e.message));
+        }
+
         return success(res, "Cập nhật lượt chi tiêu thành công", chiTieu);
     } catch (err) {
         return error(res, err.message);

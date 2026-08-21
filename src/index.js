@@ -76,6 +76,7 @@ const loaiHopDongRoutes = require("./routes/loaiHopDong.router");
 const thiduaRoutes = require("./routes/thidua.router");
 const sepayRoutes = require("./routes/sepay.router");
 const baoCaoRoutes = require("./routes/baoCao.router");
+const donViNhanTienRoutes = require("./routes/donViNhanTien.router");
 
 app.use('/auth', authRoutes);
 app.use('/khachHang', khachHangRoutes);
@@ -84,6 +85,8 @@ app.use('/hopDong', hopDongRoutes);
 app.use('/chiTieu', chiTieuRoutes);
 app.use('/lichSoanDo', lichSoanDoRoutes);
 app.use('/loaiHopDong', loaiHopDongRoutes);
+app.use('/donViNhanTien', donViNhanTienRoutes);
+app.use('/api/don-vi-nhan-tien', donViNhanTienRoutes);
 app.use('/api/thi-dua', thiduaRoutes);
 app.use('/api/sepay', sepayRoutes);
 app.use('/api/bao-cao', baoCaoRoutes);
