@@ -233,12 +233,20 @@ async function handleWebhook(req, res) {
 
         const khachHangDaThanhToan = totalPaid;
         const conLai = Math.max(0, totalAfterDiscount - khachHangDaThanhToan);
-        const trangThaiThanhToan = conLai <= 0 ? "Đã thanh toán" : "Thanh toán 1 phần";
+        let phanTramDaThanhToan = 0;
+        if (totalAfterDiscount > 0) {
+            const pt = (khachHangDaThanhToan / totalAfterDiscount) * 100;
+            phanTramDaThanhToan = Math.min(100, Math.max(0, Math.round(pt * 10) / 10));
+        } else {
+            phanTramDaThanhToan = khachHangDaThanhToan > 0 ? 100 : 0;
+        }
+        const trangThaiThanhToan = conLai <= 0 ? "Đã thanh toán đủ" : (khachHangDaThanhToan > 0 ? "Đang thanh toán" : "Chưa thanh toán");
 
         await HopDong.findByIdAndUpdate(contract._id, {
             "thanhToan.cacLuotThanhToan": updatedPaidList,
             "thanhToan.khachHangDaThanhToan": khachHangDaThanhToan,
             "thanhToan.conLai": conLai,
+            "thanhToan.phanTramDaThanhToan": phanTramDaThanhToan,
             "thanhToan.trangThaiThanhToan": trangThaiThanhToan
         });
 

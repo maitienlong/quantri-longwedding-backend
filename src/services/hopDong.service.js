@@ -28,6 +28,76 @@ function formatICTDateTime(date) {
     return `${pad(ictDate.getHours())}:${pad(ictDate.getMinutes())} ngày ${pad(ictDate.getDate())}/${pad(ictDate.getMonth() + 1)}/${ictDate.getFullYear()}`;
 }
 
+// Đảm bảo thông tin thanh toán có đầy đủ phanTramDaThanhToan và trangThaiThanhToan chuẩn xác
+function ensurePaymentProgress(contract) {
+    if (!contract) return contract;
+    const doc = typeof contract.toObject === 'function' ? contract.toObject() : contract;
+    if (!doc.thanhToan) doc.thanhToan = {};
+
+    const tt = doc.thanhToan;
+
+    // 1. Tính tổng gốc từ giỏ hàng nếu có (đã trừ giảm giá từng dịch vụ giamGiaDichVu)
+    let tongGoc = 0;
+    if (Array.isArray(doc.gioHang) && doc.gioHang.length > 0) {
+        tongGoc = doc.gioHang.reduce((sum, item) => {
+            const donGia = parseFloat(item.donGia?.toString().replace(/[^0-9.-]+/g, "") || item.giaChoThueDichVu?.toString().replace(/[^0-9.-]+/g, "") || 0);
+            const soLuong = Number(item.soLuong) || 1;
+            const giamGiaDichVu = Number(item.giamGiaDichVu) || 0;
+            const thanhTien = Math.max(0, (donGia * soLuong) - giamGiaDichVu);
+            return sum + thanhTien;
+        }, 0);
+    } else {
+        tongGoc = Number(tt.tongGiaTri ?? 0);
+    }
+
+    // 2. Tính tổng sau khi trừ giảm giá của cả hợp đồng
+    const giamGiaValue = Number(tt.giamGia) || 0;
+    const loaiGiamGia = Number(tt.loaiGiamGia) || 0;
+    let tongSauGiam = tongGoc;
+    if (loaiGiamGia === 1) {
+        tongSauGiam = tongGoc - (tongGoc * giamGiaValue / 100);
+    } else {
+        tongSauGiam = tongGoc - giamGiaValue;
+    }
+    tongSauGiam = Math.max(0, tongSauGiam);
+
+    // 3. Tính số tiền khách hàng đã thanh toán
+    const paid = Number(
+        Array.isArray(tt.cacLuotThanhToan) && tt.cacLuotThanhToan.length > 0
+            ? tt.cacLuotThanhToan.reduce((s, p) => s + (Number(p.amount) || 0), 0)
+            : (tt.khachHangDaThanhToan ?? 0)
+    );
+
+    // 4. Số tiền còn lại
+    const conLai = Math.max(0, tongSauGiam - paid);
+
+    // 5. Phần trăm đã thanh toán (%)
+    let phanTram = 0;
+    if (tongSauGiam > 0) {
+        phanTram = Math.min(100, Math.max(0, Math.round((paid / tongSauGiam) * 100 * 10) / 10));
+    } else {
+        phanTram = paid > 0 ? 100 : 0;
+    }
+
+    // 6. Trạng thái thanh toán
+    let status = "";
+    if (conLai <= 0 && (paid > 0 || tongSauGiam === 0)) {
+        status = "Đã thanh toán đủ";
+    } else if (paid > 0) {
+        status = `Đã cọc ${phanTram}%`;
+    } else {
+        status = "Chưa thanh toán";
+    }
+
+    tt.tongGiaTri = tongGoc;
+    tt.tongGiaTriSauGiam = tongSauGiam;
+    tt.khachHangDaThanhToan = paid;
+    tt.conLai = conLai;
+    tt.phanTramDaThanhToan = phanTram;
+    tt.trangThaiThanhToan = status;
+    return doc;
+}
+
 async function create(req, res) {
     try {
         // Kiểm tra trùng lịch chụp hình (khoảng cách dưới 3 tiếng)
@@ -218,6 +288,14 @@ async function update(req, res) {
             }
 
             const conLai = Math.max(0, tongGiaTriSauGiam - khachHangDaThanhToan);
+            let phanTramDaThanhToan = 0;
+            if (tongGiaTriSauGiam > 0) {
+                const pt = (khachHangDaThanhToan / tongGiaTriSauGiam) * 100;
+                phanTramDaThanhToan = Math.min(100, Math.max(0, Math.round(pt * 10) / 10));
+            } else {
+                phanTramDaThanhToan = khachHangDaThanhToan > 0 ? 100 : 0;
+            }
+            const trangThaiThanhToan = conLai <= 0 && (khachHangDaThanhToan > 0 || tongGiaTriSauGiam === 0) ? "Đã thanh toán đủ" : (khachHangDaThanhToan > 0 ? "Đang thanh toán" : "Chưa thanh toán");
 
             hopDong.thanhToan = {
                 tongGiaTri,
@@ -226,6 +304,8 @@ async function update(req, res) {
                 tongGiaTriSauGiam,
                 khachHangDaThanhToan,
                 conLai,
+                phanTramDaThanhToan,
+                trangThaiThanhToan,
                 cacLuotThanhToan
             };
 
@@ -595,12 +675,14 @@ async function list(req, res) {
             })
             .sort(sortQuery);
 
+        const formattedList = hopDong.map(ensurePaymentProgress);
+
         return success(res, "Tải dữ liệu thành công !", {
             filter: filter || "all",
             status: status || "all",
             keyword: keyword || "",
-            count: hopDong.length,
-            hopDong
+            count: formattedList.length,
+            hopDong: formattedList
         });
     } catch (err) {
         return error(res, err.message);
@@ -667,9 +749,11 @@ async function search(req, res) {
             })
             .sort({ ngayHopDong: -1 });
             
+        const formattedList = hopDong.map(ensurePaymentProgress);
+            
         return success(res, "Tìm kiếm hợp đồng thành công !", {
-            count: hopDong.length,
-            hopDong
+            count: formattedList.length,
+            hopDong: formattedList
         });
     } catch (err) {
         return error(res, err.message);
@@ -805,7 +889,9 @@ async function getCustomerContracts(req, res) {
             }
         }
 
-        return success(res, "Lấy danh sách hợp đồng thành công!", hopDong);
+        const formattedList = hopDong.map(ensurePaymentProgress);
+
+        return success(res, "Lấy danh sách hợp đồng thành công!", formattedList);
     } catch (err) {
         return error(res, err.message);
     }

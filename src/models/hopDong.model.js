@@ -72,6 +72,8 @@ const hopDongSchema = new mongoose.Schema({
     tongGiaTriSauGiam: { type: Number },
     khachHangDaThanhToan: { type: Number },
     conLai: { type: Number },
+    phanTramDaThanhToan: { type: Number, default: 0 },
+    trangThaiThanhToan: { type: String, default: "Chưa thanh toán" },
     cacLuotThanhToan: [paymentSubSchema]
   },
   cacNgay: {
@@ -195,10 +197,11 @@ hopDongSchema.pre('save', async function (next) {
           }
         }
 
-        // Tính thanhTien từng item
+        // Tính thanhTien từng item (trừ giảm giá trực tiếp trên từng dịch vụ)
         const soLuong = Number(item.soLuong) || 0;
         const donGia = Number(item.donGia) || 0;
-        item.thanhTien = soLuong * donGia;
+        const giamGiaDichVu = Number(item.giamGiaDichVu) || 0;
+        item.thanhTien = Math.max(0, (soLuong * donGia) - giamGiaDichVu);
         
         tongChuaGiam += item.thanhTien;
       }
@@ -236,6 +239,23 @@ hopDongSchema.pre('save', async function (next) {
     const tongSauGiam = this.thanhToan.tongGiaTriSauGiam || 0;
     const daThanhToan = this.thanhToan.khachHangDaThanhToan || 0;
     this.thanhToan.conLai = Math.max(0, tongSauGiam - daThanhToan);
+
+    // 6. Tính phần trăm (%) đã thanh toán
+    if (tongSauGiam > 0) {
+      const pt = (daThanhToan / tongSauGiam) * 100;
+      this.thanhToan.phanTramDaThanhToan = Math.min(100, Math.max(0, Math.round(pt * 10) / 10));
+    } else {
+      this.thanhToan.phanTramDaThanhToan = daThanhToan > 0 ? 100 : 0;
+    }
+
+    // 7. Cập nhật trạng thái thanh toán
+    if (this.thanhToan.conLai <= 0 && (daThanhToan > 0 || tongSauGiam === 0)) {
+      this.thanhToan.trangThaiThanhToan = "Đã thanh toán đủ";
+    } else if (daThanhToan > 0) {
+      this.thanhToan.trangThaiThanhToan = "Đang thanh toán";
+    } else {
+      this.thanhToan.trangThaiThanhToan = "Chưa thanh toán";
+    }
 
     next();
   } catch (error) {
