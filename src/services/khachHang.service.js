@@ -28,23 +28,52 @@ async function create(req, res) {
 }
 
 
+function createSearchRegex(keyword) {
+    if (!keyword) return null;
+    const map = {
+        'a': '[aàáảãạăằắẳẵặâầấẩẫậ]',
+        'e': '[eèéẻẽẹêềếểễệ]',
+        'i': '[iìíỉĩị]',
+        'o': '[oòóỏõọôồốổỗộơờớởỡợ]',
+        'u': '[uùúủũụưừứửữự]',
+        'y': '[yỳýỷỹỵ]',
+        'd': '[dđ]',
+    };
+    const pattern = keyword.split('').map(char => {
+        const lower = char.toLowerCase();
+        if (map[lower]) return map[lower];
+        return char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }).join('');
+    return new RegExp(pattern, 'i');
+}
+
 async function find(req, res) {
-    const { soDienThoai, keyword, facebookId } = req.body || {};
+    const { soDienThoai, keyword, facebookId, tenKhachHang } = req.body || {};
     try {
         let query = {};
-        if (soDienThoai) {
-            query.soDienThoai = { $regex: soDienThoai, $options: 'i' };
+        if (tenKhachHang) {
+            query.tenKhachHang = createSearchRegex(tenKhachHang);
+        } else if (soDienThoai) {
+            const escaped = soDienThoai.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            query.soDienThoai = { $regex: escaped, $options: 'i' };
         } else if (facebookId) {
-            query.facebookId = { $regex: facebookId, $options: 'i' };
+            const escaped = facebookId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            query.facebookId = { $regex: escaped, $options: 'i' };
         } else if (keyword) {
+            const searchRegex = createSearchRegex(keyword);
+            const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             query.$or = [
-                { tenKhachHang: { $regex: keyword, $options: 'i' } },
-                { soDienThoai: { $regex: keyword, $options: 'i' } },
-                { diaChi: { $regex: keyword, $options: 'i' } }
+                { tenKhachHang: searchRegex },
+                { soDienThoai: { $regex: escaped, $options: 'i' } },
+                { diaChi: searchRegex }
             ];
         }
 
-        const customers = await KhachHang.find(query).sort({ createdAt: -1 });
+        let customersQuery = KhachHang.find(query).sort({ createdAt: -1 });
+        if (tenKhachHang || soDienThoai || facebookId || keyword) {
+            customersQuery = customersQuery.limit(50);
+        }
+        const customers = await customersQuery;
 
         // For each customer, count how many contracts they have
         const HopDong = require("../models/hopDong.model");
@@ -149,7 +178,7 @@ async function login(req, res) {
     const { soDienThoai, maDangNhap } = req.body;
     try {
         if (!soDienThoai || !maDangNhap) {
-            return error(res, "Vui lòng nhập tài khoản (SĐT/Link FB) và mã đăng nhập");
+            return error(res, "Vui lòng nhập tài khoản (SĐT/Link FB) và mã đăng nhập", 400);
         }
 
         let query = {};
@@ -171,7 +200,7 @@ async function login(req, res) {
             if (json && json.success === 200 && json.id) {
                 query.facebookId = json.id;
             } else {
-                return error(res, "Không thể trích xuất ID từ link Facebook này.");
+                return error(res, "Không thể trích xuất ID từ link Facebook này.", 400);
             }
         } else {
             query = { $or: [{ soDienThoai: soDienThoai }, { facebookId: soDienThoai }] };
@@ -179,11 +208,11 @@ async function login(req, res) {
 
         const khachHang = await KhachHang.findOne(query);
         if (!khachHang) {
-            return error(res, "Khách hàng không tồn tại trên hệ thống");
+            return error(res, "Khách hàng không tồn tại trên hệ thống", 400);
         }
 
         if (khachHang.maDangNhap !== maDangNhap) {
-            return error(res, "Mã đăng nhập không đúng");
+            return error(res, "Mã đăng nhập không đúng", 400);
         }
 
         const token = jwt.sign(
@@ -194,7 +223,7 @@ async function login(req, res) {
 
         return success(res, "Đăng nhập thành công!", { token, khachHang });
     } catch (err) {
-        return error(res, err.message);
+        return error(res, err.message, 500);
     }
 }
 

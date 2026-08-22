@@ -406,6 +406,7 @@ async function getQrInfo(req, res) {
 async function checkStatus(req, res) {
     try {
         const { maHopDong } = req.params;
+        const rawCode = maHopDong || "";
         const prefix = "HD";
         const rawDigits = rawCode.replace(/^HD[-\s]?/i, "").replace(/\D/g, "");
         const last6Digits = rawDigits.length >= 6 ? rawDigits.slice(-6) : rawDigits;

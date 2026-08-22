@@ -6,8 +6,8 @@ function success(res, msg, data) {
   });
 }
 
-function error(res, message) {
-  return res.status(500).json({
+function error(res, message, statusCode = 400) {
+  return res.status(statusCode).json({
     status: "error",
     message,
   });

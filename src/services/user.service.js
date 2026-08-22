@@ -120,17 +120,20 @@ async function loginUser(req, res) {
     const { username, password } = data;
 
     try {
-        // 1. Kiểm tra email có tồn tại
+        if (!username || !password) {
+            return error(res, "Vui lòng nhập đầy đủ tài khoản và mật khẩu!", 400);
+        }
+
+        // 1. Kiểm tra tài khoản có tồn tại
         const user = await User.findOne({ username });
         if (!user) {
-            return error(res, "Tài khoản không tồn tại!")
+            return error(res, "Tài khoản không tồn tại trên hệ thống!", 400);
         }
 
         // 2. So sánh mật khẩu
         const isMatch = await user.comparePassword(password);
         if (!isMatch) {
-
-            return error(res, "Mật khẩu không đúng!")
+            return error(res, "Mật khẩu không chính xác!", 400);
         }
 
         // 3. Tạo JWT token
@@ -151,7 +154,7 @@ async function loginUser(req, res) {
         });
 
     } catch (err) {
-        return error(res, "Đăng nhập thất bại: " + err.message);
+        return error(res, "Đăng nhập thất bại: " + err.message, 500);
     }
 }
 
