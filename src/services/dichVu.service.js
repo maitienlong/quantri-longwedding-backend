@@ -1,5 +1,6 @@
 const DichVu = require("../models/dichVu.model");
 const { success, error } = require("../utils/response");
+const { createLog } = require("../utils/logger");
 const fs = require("fs");
 const path = require("path");
 
@@ -48,6 +49,12 @@ async function create(req, res) {
         });
         await dichVu.save();
         console.log("Đã tạo dịch vụ: " + req.body.tenDichVu + " thành công !");
+        createLog({
+            action: `Thêm dịch vụ / gói (${dichVu.tenDichVu})`,
+            user: req.user?.fullname || "Quản lý",
+            req,
+            details: { maDichVu: dichVu.maDichVu, tenDichVu: dichVu.tenDichVu, gia: dichVu.giaChoThueDichVu }
+        });
         return success(res, dichVu);
     } catch (err) {
         return error(res, err.message);
@@ -126,6 +133,13 @@ async function update(req, res) {
             return error(res, "Không tìm thấy dịch vụ để cập nhật");
         }
 
+        createLog({
+            action: `Cập nhật dịch vụ / gói (${tenDichVu || maDichVu})`,
+            user: req.user?.fullname || "Quản lý",
+            req,
+            details: { maDichVu, tenDichVu, updateFields }
+        });
+
         return success(res, { message: "Đã cập nhật dịch vụ: " + tenDichVu });
 
     } catch (err) {
@@ -143,6 +157,12 @@ async function remove(req, res) {
         }
 
         console.log("Đã xóa dịch vụ:", dichVu.tenDichVu);
+        createLog({
+            action: `Xóa dịch vụ / gói (${dichVu.tenDichVu})`,
+            user: req.user?.fullname || "Quản lý",
+            req,
+            details: { maDichVu: dichVu.maDichVu, tenDichVu: dichVu.tenDichVu }
+        });
         return success(res, { message: "Xóa dịch vụ thành công" });
     } catch (err) {
         return error(res, err.message);

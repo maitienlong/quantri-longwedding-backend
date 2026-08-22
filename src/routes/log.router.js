@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const Log = require('../models/log.model');
+const authMiddleware = require('../middleware/auth.middleware');
+const checkRole = require('../middleware/role.middleware');
 
 // POST /api/log - Create a new log
 router.post('/', async (req, res) => {
@@ -29,8 +31,8 @@ router.post('/', async (req, res) => {
     }
 });
 
-// GET /api/log - List logs
-router.get('/', async (req, res) => {
+// GET /api/log - List logs (Chỉ Quản lý mới được xem)
+router.get('/', authMiddleware, checkRole(["Quản lý"]), async (req, res) => {
     try {
         const logs = await Log.find().sort({ createdAt: -1 }).limit(1000);
         res.status(200).json({ status: 'success', data: logs });

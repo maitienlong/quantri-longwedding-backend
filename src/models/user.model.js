@@ -14,15 +14,21 @@ const userSchema = new mongoose.Schema({
     loaiHoaHong: { type: Number, default: 0 }, // 0: VNĐ / công việc, 1: % Doanh số
     chiTieuTuan: { type: Number, default: 5 },
     chiTieuThang: { type: Number, default: 20 },
-    chiTieuNam: { type: Number, default: 200 }
+    chiTieuNam: { type: Number, default: 200 },
+    chiTieuDoanhSoThang: { type: Number, default: 0 }, // Doanh số chỉ tiêu cá nhân (VNĐ)
+    heSoThuong: { type: Number, default: 1 },
+    hoaHongTheoLoaiHD: [{
+        loaiHopDongId: { type: Number },
+        loaiHoaHong: { type: Number, default: 0 },
+        mucHoaHong: { type: Number, default: 0 }
+    }] // Hệ số thưởng thi đua
 }, { timestamps: true });
 
 // Hash password trước khi lưu
 userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next(); // Nếu password chưa thay đổi thì bỏ qua
-
+  if (!this.isModified("password")) return next();
   try {
-    const salt = await bcrypt.genSalt(10); // độ mạnh 10 rounds
+    const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
     next();
   } catch (err) {
@@ -36,4 +42,3 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
 };
 
 module.exports = mongoose.model("users", userSchema);
-

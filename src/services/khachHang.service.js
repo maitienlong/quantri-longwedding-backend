@@ -1,6 +1,7 @@
 const KhachHang = require("../models/khachHang.model");
 const { success, error } = require("../utils/response");
 const jwt = require("jsonwebtoken");
+const { createLog } = require("../utils/logger");
 
 
 
@@ -21,6 +22,12 @@ async function create(req, res) {
         });
         await khachHang.save();
         console.log("Khởi tạo khách hàng: " + data.tenKhachHang + " thành công !");
+        createLog({
+            action: `Thêm khách hàng (${data.tenKhachHang})`,
+            user: req.user?.fullname || "Nhân viên",
+            req,
+            details: { tenKhachHang: data.tenKhachHang, soDienThoai: data.soDienThoai }
+        });
         return success(res, "Khởi tạo khách hàng thành công!", khachHang);
     } catch (err) {
         return error(res, err.message);
@@ -111,6 +118,12 @@ async function update(req, res) {
         );
 
         if (!khachHang) return error(res, "Không tìm thấy khách hàng để cập nhật");
+        createLog({
+            action: `Cập nhật khách hàng (${khachHang.tenKhachHang})`,
+            user: req.user?.fullname || "Nhân viên",
+            req,
+            details: { tenKhachHang: khachHang.tenKhachHang, soDienThoai: khachHang.soDienThoai }
+        });
         return success(res, "Cập nhật khách hàng thành công!", khachHang);
     } catch (err) {
         return error(res, err.message);
@@ -137,6 +150,13 @@ async function remove(req, res) {
 
         const khachHang = await KhachHang.findByIdAndDelete(_id);
         if (!khachHang) return error(res, "Không tìm thấy khách hàng để xóa");
+
+        createLog({
+            action: `Xóa khách hàng (${khachHang.tenKhachHang})`,
+            user: req.user?.fullname || "Quản lý",
+            req,
+            details: { tenKhachHang: khachHang.tenKhachHang, soDienThoai: khachHang.soDienThoai }
+        });
 
         return success(res, "Xóa khách hàng thành công!", { _id });
     } catch (err) {

@@ -1,5 +1,6 @@
 const LichSoanDo = require("../models/lichSoanDo.model");
 const { success, error } = require("../utils/response");
+const { createLog } = require("../utils/logger");
 
 async function createOrUpdate(req, res) {
     try {
@@ -38,6 +39,12 @@ async function createOrUpdate(req, res) {
             item.dsMuon = dsMuon || [];
             item.dsTra = dsTra || [];
             await item.save();
+            createLog({
+                action: `Cập nhật lịch soạn đồ (${maHopDong})`,
+                user: req.user?.fullname || nguoiKiem || "Nhân viên",
+                req,
+                details: { maHopDong, trangThai, ngayMuon, ngayTra, soLuongMon: (dsMuon || []).length }
+            });
             return success(res, "Cập nhật lịch soạn đồ thành công", item);
         } else {
             // Create
@@ -55,6 +62,12 @@ async function createOrUpdate(req, res) {
                 dsTra: dsTra || []
             });
             await item.save();
+            createLog({
+                action: `Lập phiếu soạn đồ (${maHopDong})`,
+                user: req.user?.fullname || nguoiKiem || "Nhân viên",
+                req,
+                details: { maHopDong, trangThai, ngayMuon, ngayTra, soLuongMon: (dsMuon || []).length }
+            });
             return success(res, "Tạo lịch soạn đồ thành công", item);
         }
     } catch (err) {
@@ -109,6 +122,12 @@ async function remove(req, res) {
         if (!item) {
             return error(res, "Không tìm thấy lịch soạn đồ để xóa");
         }
+        createLog({
+            action: `Xóa phiếu soạn đồ (${item.maHopDong})`,
+            user: req.user?.fullname || "Quản lý",
+            req,
+            details: { maHopDong: item.maHopDong }
+        });
         return success(res, "Xóa lịch soạn đồ thành công");
     } catch (err) {
         return error(res, err.message);

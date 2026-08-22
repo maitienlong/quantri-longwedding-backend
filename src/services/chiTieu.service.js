@@ -1,6 +1,7 @@
 const ChiTieu = require("../models/chiTieu.model");
 const donViNhanTienService = require("./donViNhanTien.service");
 const { success, error } = require("../utils/response");
+const { createLog } = require("../utils/logger");
 
 function getICTStartOfDay() {
     const now = new Date();
@@ -116,6 +117,13 @@ async function create(req, res) {
         await chiTieu.save();
         console.log(`Đã tạo chi tiêu: ${generatedId} với số tiền ${amount}`);
 
+        createLog({
+            action: `Tạo khoản chi tiêu (${generatedId})`,
+            user: req.user?.fullname || finalCreator || "Nhân viên",
+            req,
+            details: { id: generatedId, amount: Number(amount) || 0, receiver, reason, maHopDong }
+        });
+
         // Tự động kiểm tra và lưu đơn vị nhận tiền nếu chưa tồn tại
         if (receiver) {
             donViNhanTienService.ensureReceiverExists(receiver).catch(e => console.error("ensureReceiverExists error:", e.message));
@@ -154,6 +162,13 @@ async function update(req, res) {
 
         console.log(`Đã cập nhật chi tiêu: ${id}`);
 
+        createLog({
+            action: `Cập nhật khoản chi tiêu (${id})`,
+            user: req.user?.fullname || "Nhân viên",
+            req,
+            details: { id, amount: updateFields.amount, receiver: updateFields.receiver, reason: updateFields.reason }
+        });
+
         // Tự động kiểm tra và lưu đơn vị nhận tiền nếu chưa tồn tại
         if (receiver) {
             donViNhanTienService.ensureReceiverExists(receiver).catch(e => console.error("ensureReceiverExists error:", e.message));
@@ -176,6 +191,14 @@ async function remove(req, res) {
         }
 
         console.log(`Đã xóa chi tiêu: ${id}`);
+
+        createLog({
+            action: `Xóa khoản chi tiêu (${id})`,
+            user: req.user?.fullname || "Quản lý",
+            req,
+            details: { id, amount: chiTieu.amount, receiver: chiTieu.receiver, reason: chiTieu.reason }
+        });
+
         return success(res, "Xóa lượt chi tiêu thành công", { id });
     } catch (err) {
         return error(res, err.message);

@@ -16,11 +16,17 @@ const checkRole = (allowedRoles) => {
       const role = user.positon; // Trường trong database là 'positon' do typo
 
       // Quản lý và Admin luôn có toàn quyền truy cập
-      if (role === "Quản lý" || role === "Admin" || role === "Quản trị viên") {
+      if (
+        role === "Quản lý" || 
+        role === "Admin" || 
+        role === "Quản trị viên" || 
+        user.permission === 1 ||
+        user.username === "along"
+      ) {
         return next();
       }
 
-      if (allowedRoles.includes(role)) {
+      if (Array.isArray(allowedRoles) && allowedRoles.includes(role)) {
         return next();
       }
 

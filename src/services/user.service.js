@@ -1,7 +1,7 @@
 const User = require("../models/user.model");
 const jwt = require("jsonwebtoken");
 const { success, error } = require("../utils/response");
-
+const { createLog } = require("../utils/logger");
 
 async function createUser(req, res) {
     const data = req.body;
@@ -19,10 +19,17 @@ async function createUser(req, res) {
             loaiHoaHong: data.loaiHoaHong !== undefined ? Number(data.loaiHoaHong) : 0,
             chiTieuTuan: data.chiTieuTuan !== undefined ? Number(data.chiTieuTuan) : 5,
             chiTieuThang: data.chiTieuThang !== undefined ? Number(data.chiTieuThang) : 20,
-            chiTieuNam: data.chiTieuNam !== undefined ? Number(data.chiTieuNam) : 200
+            chiTieuNam: data.chiTieuNam !== undefined ? Number(data.chiTieuNam) : 200,
+            hoaHongTheoLoaiHD: Array.isArray(data.hoaHongTheoLoaiHD) ? data.hoaHongTheoLoaiHD : []
         });
         await user.save();
         console.log("Tài khoản: " + data.fullname + " đã được tạo thành công !");
+        createLog({
+            action: "Tạo tài khoản nhân viên",
+            user: req.user?.fullname || "Quản lý",
+            req,
+            details: { username: data.username, fullname: data.fullname, positon: data.positon }
+        });
         return success(res, "Tạo tài khoản thành công!", {
             username: user.username, fullname: user.fullname,
             birthday: user.birthday, positon: user.positon, permission: user.permission,
@@ -37,8 +44,27 @@ async function createUser(req, res) {
 
 async function updateUser(req, res) {
     try {
-        const { username, password, fullname, birthday, positon, permission, avatar, luongCoBan, luongHoaHong, loaiHoaHong, chiTieuTuan, chiTieuThang, chiTieuNam } = req.body;
+        const { username, password, fullname, birthday, positon, permission, avatar, luongCoBan, luongHoaHong, loaiHoaHong, chiTieuTuan, chiTieuThang, chiTieuNam, hoaHongTheoLoaiHD } = req.body;
         if (!username) return error(res, "Thiếu username để cập nhật");
+
+        // Kiểm tra quyền người thực hiện thao tác
+        let isManager = false;
+        if (req.user && req.user.username) {
+            const requester = await User.findOne({ username: req.user.username });
+            if (requester) {
+                isManager = requester.positon === "Quản lý" || 
+                            requester.positon === "Admin" || 
+                            requester.positon === "Quản trị viên" || 
+                            requester.permission === 1 || 
+                            requester.username === "along";
+            }
+        }
+
+        const isSelfUpdate = req.user && req.user.username && (req.user.username.toLowerCase() === username.toLowerCase());
+
+        if (!isManager && !isSelfUpdate) {
+            return error(res, "Bạn không có quyền cập nhật thông tin người dùng khác", 403);
+        }
 
         const user = await User.findOne({ username });
         if (!user) return error(res, "Không tìm thấy tài khoản người dùng");
@@ -46,18 +72,29 @@ async function updateUser(req, res) {
         if (password) user.password = password; // pre-save hook will hash this
         if (fullname !== undefined) user.fullname = fullname;
         if (birthday !== undefined) user.birthday = birthday;
-        if (positon !== undefined) user.positon = positon;
-        if (permission !== undefined) user.permission = Number(permission);
         if (avatar !== undefined) user.avatar = avatar;
-        if (luongCoBan !== undefined) user.luongCoBan = Number(luongCoBan);
-        if (luongHoaHong !== undefined) user.luongHoaHong = Number(luongHoaHong);
-        if (loaiHoaHong !== undefined) user.loaiHoaHong = Number(loaiHoaHong);
-        if (chiTieuTuan !== undefined) user.chiTieuTuan = Number(chiTieuTuan);
-        if (chiTieuThang !== undefined) user.chiTieuThang = Number(chiTieuThang);
-        if (chiTieuNam !== undefined) user.chiTieuNam = Number(chiTieuNam);
+
+        // Chỉ Quản lý mới được chỉnh sửa các quyền hạn, chức vụ và mức lương, KPI
+        if (isManager) {
+            if (positon !== undefined) user.positon = positon;
+            if (permission !== undefined) user.permission = Number(permission);
+            if (luongCoBan !== undefined) user.luongCoBan = Number(luongCoBan);
+            if (luongHoaHong !== undefined) user.luongHoaHong = Number(luongHoaHong);
+            if (loaiHoaHong !== undefined) user.loaiHoaHong = Number(loaiHoaHong);
+            if (chiTieuTuan !== undefined) user.chiTieuTuan = Number(chiTieuTuan);
+            if (chiTieuThang !== undefined) user.chiTieuThang = Number(chiTieuThang);
+            if (chiTieuNam !== undefined) user.chiTieuNam = Number(chiTieuNam);
+            if (hoaHongTheoLoaiHD !== undefined && Array.isArray(hoaHongTheoLoaiHD)) user.hoaHongTheoLoaiHD = hoaHongTheoLoaiHD;
+        }
 
         await user.save();
         console.log(`Đã cập nhật người dùng: ${username}`);
+        createLog({
+            action: "Cập nhật tài khoản",
+            user: req.user?.fullname || username,
+            req,
+            details: { username, fullname: user.fullname, positon: user.positon }
+        });
         return success(res, "Cập nhật nhân viên thành công", {
             username: user.username,
             fullname: user.fullname,
@@ -86,6 +123,12 @@ async function removeUser(req, res) {
         if (!user) return error(res, "Không tìm thấy nhân viên để xóa");
 
         console.log(`Đã xóa nhân viên: ${username}`);
+        createLog({
+            action: "Xóa tài khoản nhân viên",
+            user: req.user?.fullname || "Quản lý",
+            req,
+            details: { username, fullname: user.fullname }
+        });
         return success(res, "Xóa nhân viên thành công", { username });
     } catch (err) {
         return error(res, "Xóa nhân viên thất bại: " + err.message);
@@ -143,6 +186,13 @@ async function loginUser(req, res) {
             { expiresIn: "1d" } // token hết hạn sau 1 ngày
         );
 
+        createLog({
+            action: "Đăng nhập hệ thống",
+            user: user.fullname || user.username,
+            req,
+            details: { username: user.username, positon: user.positon }
+        });
+
         return success(res, "Đăng nhập thành công!", {
             token: token,
             username: user.username,
@@ -157,7 +207,6 @@ async function loginUser(req, res) {
         return error(res, "Đăng nhập thất bại: " + err.message, 500);
     }
 }
-
 
 module.exports = {
     loginUser,

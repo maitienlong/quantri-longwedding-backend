@@ -4,6 +4,7 @@ const DichVu = require("../models/dichVu.model");
 const Payment = require("../models/payment.model");
 const Album = require("../models/album.model");
 const { success, error } = require("../utils/response");
+const { createLog } = require("../utils/logger");
 
 // Helper function to get current date-time string in ICT (+07:00) timezone
 function getICTDateTimeString() {
@@ -205,12 +206,32 @@ async function create(req, res) {
 
         await hopDong.save();
         console.log("Đã tạo hợp đồng mã số: " + req.body.maHopDong + " thành công !");
+        
+        let tenKhach = "";
+        try {
+            if (req.body.khachHang1) {
+                const khObj = await KhachHang.findById(req.body.khachHang1);
+                tenKhach = khObj ? khObj.tenKhachHang : "";
+            }
+        } catch (e) {}
+
+        createLog({
+            action: `Tạo hợp đồng mới (${req.body.maHopDong})`,
+            user: req.user?.fullname || req.body.createBy || "Nhân viên",
+            req,
+            details: {
+                maHopDong: req.body.maHopDong,
+                khachHang: tenKhach || "Khách hàng",
+                tongTien: req.body.thanhToan?.tongGiaTriSauGiam || req.body.thanhToan?.tongGiaTri || 0
+            }
+        });
+
         return success(res, "Đã tạo hợp đồng mã số: " + req.body.maHopDong + " thành công !", hopDong);
     } catch (err) {
         if (err.code === 11000) {
             return error(res, "Mã hợp đồng đã tồn tại, vui lòng sử dụng mã khác.");
         }
-        return error(res, err.message);
+        return error(res, "Không thể tạo hợp đồng: " + err.message);
     }
 }
 
@@ -331,6 +352,19 @@ async function update(req, res) {
         }
         await hopDong.save();
 
+        createLog({
+            action: `Cập nhật hợp đồng (${maHopDong})`,
+            user: req.user?.fullname || "Nhân viên",
+            req,
+            details: {
+                maHopDong,
+                giaiDoan: giaiDoan !== undefined ? giaiDoan : hopDong.giaiDoan,
+                thoChupHinh: hopDong.nguoiPhucVu?.thoChupHinh,
+                thoMakeUp: hopDong.nguoiPhucVu?.thoMakeUp,
+                thoChinhAnh: hopDong.nguoiPhucVu?.thoChinhAnh
+            }
+        });
+
         return success(res, "Đã cập nhật thành công", hopDong);
 
     } catch (err) {
@@ -394,6 +428,12 @@ async function remove(req, res) {
         }
 
         console.log("Đã xóa hợp đồng:", deletedHD.maHopDong);
+        createLog({
+            action: `Xóa hợp đồng (${deletedHD.maHopDong})`,
+            user: req.user?.fullname || "Quản lý",
+            req,
+            details: { maHopDong: deletedHD.maHopDong }
+        });
         return success(res, "Xóa hợp đồng thành công");
     } catch (err) {
         return error(res, err.message);
