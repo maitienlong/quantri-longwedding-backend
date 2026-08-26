@@ -11,6 +11,22 @@ router.post("/upload", authMiddleware, upload.single("image"), websiteService.up
 // Route công khai để săn Voucher
 router.post("/vouchers/claim", websiteService.claimVoucher);
 
+// ==========================================
+// ROUTES ĐẠI LỄ QUỐC KHÁNH 2/9 (/quoc-khanh)
+// ==========================================
+// 1. Công khai (Public)
+router.get("/quoc-khanh/all-data", websiteService.getQuocKhanhAllData);
+router.post("/quoc-khanh/tribute", websiteService.addQuocKhanhTribute);
+router.post("/quoc-khanh/light-flag", websiteService.incrementQuocKhanhFlag);
+router.post("/quoc-khanh/booking", websiteService.addQuocKhanhBooking);
+router.post("/quoc-khanh/claim-gift", websiteService.claimQuocKhanhGift);
+
+// 2. Quản trị viên (Admin)
+router.delete("/quoc-khanh/messages/:id", authMiddleware, checkRole(["Quản lý"]), websiteService.deleteQuocKhanhMessage);
+router.put("/quoc-khanh/flags", authMiddleware, checkRole(["Quản lý"]), websiteService.updateQuocKhanhFlags);
+router.put("/quoc-khanh/deals", authMiddleware, checkRole(["Quản lý"]), websiteService.updateQuocKhanhDeals);
+router.put("/quoc-khanh/gifts", authMiddleware, checkRole(["Quản lý"]), websiteService.updateQuocKhanhGifts);
+
 // Public API để website lấy dữ liệu
 router.get("/:section", websiteService.getSection);
 
