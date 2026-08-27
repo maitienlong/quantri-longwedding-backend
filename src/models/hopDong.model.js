@@ -69,6 +69,9 @@ const hopDongSchema = new mongoose.Schema({
     tongGiaTri: { type: Number },
     giamGia: { type: Number },
     loaiGiamGia: { type: Number }, // 0: tiền mặt, 1: phần trăm
+    voucherCode: { type: String, default: "" },
+    voucherGiamGia: { type: Number, default: 0 },
+    voucherId: { type: mongoose.Schema.Types.ObjectId, ref: 'Voucher' },
     tongGiaTriSauGiam: { type: Number },
     khachHangDaThanhToan: { type: Number },
     conLai: { type: Number },

@@ -1,15 +1,82 @@
 const WEBSITE = require("../models/website.model");
 const HopDong = require("../models/hopDong.model");
 const Album = require("../models/album.model");
+const Voucher = require("../models/voucher.model");
+
+
+// Hàm chuẩn hóa dữ liệu Voucher từ MongoDB sang định dạng Website
+// Helper chuẩn hóa số điện thoại về chuỗi số đồng nhất (ví dụ: 0987654321)
+function normalizePhoneNumber(phone) {
+  if (!phone) return '';
+  let clean = String(phone).replace(/\D/g, '');
+  if (clean.startsWith('84') && clean.length > 9) {
+    clean = '0' + clean.slice(2);
+  }
+  return clean;
+}
+
+// Helper sinh chuỗi ngẫu nhiên ký tự dễ đọc
+function generateRandomSuffix(len = 4) {
+  const chars = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+  let str = "";
+  for (let i = 0; i < len; i++) {
+    str += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return str;
+}
+
+// Hàm chuẩn hóa dữ liệu Voucher từ MongoDB sang định dạng Website
+function formatVoucherForWebsite(v) {
+  const isPercent = Number(v.discountType) === 1;
+  const valNum = Number(v.discountValue) || 0;
+  const discountValStr = isPercent 
+    ? `Giảm ${valNum}%` 
+    : `Giảm ${valNum.toLocaleString('vi-VN')}đ`;
+  const badgeStr = isPercent 
+    ? `GIẢM ${valNum}%` 
+    : (valNum >= 1000000 
+       ? `GIẢM ${(valNum / 1000000).toFixed(1).replace('.0', '')}TR` 
+       : `GIẢM ${Math.round(valNum / 1000)}K`);
+  
+  let expiryStr = '31/12/2026';
+  if (v.endDate) {
+    const d = new Date(v.endDate);
+    if (!isNaN(d.getTime())) {
+      expiryStr = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
+    }
+  }
+
+  const minOrderNum = Number(v.minOrderValue) || 0;
+  const minOrderStr = minOrderNum > 0 
+    ? `Đơn từ ${minOrderNum.toLocaleString('vi-VN')} đ` 
+    : 'Mọi hợp đồng dịch vụ';
+
+  return {
+    id: v._id ? v._id.toString() : (v.id || v.code),
+    _id: v._id,
+    code: v.code,
+    title: v.title,
+    value: discountValStr,
+    badge: badgeStr,
+    desc: v.description || (minOrderNum > 0 ? `Áp dụng cho đơn từ ${minOrderNum.toLocaleString('vi-VN')} đ.` : 'Áp dụng cho tất cả các dịch vụ cưới tại Long Wedding Studio.'),
+    minOrder: minOrderStr,
+    minOrderValue: minOrderNum,
+    discountType: isPercent ? 'percent' : 'fixed',
+    discountValue: valNum,
+    maxDiscount: Number(v.maxDiscount) || 0,
+    quantity: v.usageLimit ? Number(v.usageLimit) : 999,
+    claimedCount: Number(v.usedCount) || 0,
+    usedCount: Number(v.usedCount) || 0,
+    winningRate: Number(v.winningRate !== undefined ? v.winningRate : 50),
+    isActive: v.isActive !== false,
+    active: v.isActive !== false,
+    expiry: expiryStr,
+    expiryDate: v.endDate ? (typeof v.endDate === 'string' ? v.endDate : v.endDate.toISOString().split('T')[0]) : '2026-12-31'
+  };
+}
 
 // Dữ liệu mặc định Quốc Khánh 2/9 (Kỷ niệm 81 năm)
-const DEFAULT_QUOC_KHANH_MESSAGES = [
-  { id: 1, name: 'Nguyễn Văn Hùng', location: 'Hà Nội', text: 'Tự hào 81 năm non sông gấm vóc! Chúc Việt Nam ngày càng phồn vinh, hùng cường!', time: '1 phút trước', createdAt: new Date().toISOString() },
-  { id: 2, name: 'Trần Thị Mai & Lê Quang', location: 'TP. Hồ Chí Minh', text: 'Vợ chồng mình chọn chụp bộ ảnh cưới Áo dài cờ đỏ sao vàng mừng Quốc khánh 2/9. Cảm ơn sự hy sinh của các thế hệ cha ông!', time: '3 phút trước', createdAt: new Date().toISOString() },
-  { id: 3, name: 'Đoàn Thanh Niên', location: 'Đà Nẵng', text: 'Tuổi trẻ nguyện cống hiến hết mình cho Tổ quốc Việt Nam thân yêu! 2/9 muôn năm!', time: '6 phút trước', createdAt: new Date().toISOString() },
-  { id: 4, name: 'Phạm Hương Giang', location: 'Hải Phòng', text: 'Hào khí 81 năm lịch sử vẫn rực cháy trong tim mỗi người con đất Việt!', time: '12 phút trước', createdAt: new Date().toISOString() },
-  { id: 5, name: 'Hoàng Minh & Thảo Ly', location: 'Cần Thơ', text: 'Chúc toàn thể đồng bào có một kỳ nghỉ lễ 2/9 thật ấm áp và ngập tràn hạnh phúc!', time: '15 phút trước', createdAt: new Date().toISOString() }
-];
+const DEFAULT_QUOC_KHANH_MESSAGES = [];
 
 const DEFAULT_QUOC_KHANH_FLAGS = 81945;
 
@@ -155,12 +222,12 @@ exports.getSection = async (req, res) => {
       return res.status(200).json({ success: true, data });
     }
 
-    // Fallback thông minh cho các mục của Đại Lễ Quốc Khánh
+    // Lời Tri Ân Đại Lễ Quốc Khánh - Chỉ lấy dữ liệu thật, loại bỏ dữ liệu mẫu
     if (section === 'quoc_khanh_messages') {
-      if (!data || (Array.isArray(data) && data.length === 0)) {
-        data = DEFAULT_QUOC_KHANH_MESSAGES;
-      }
-      return res.status(200).json({ success: true, data });
+      const sampleNames = ['Nguyễn Văn Hùng', 'Trần Thị Mai & Lê Quang', 'Đoàn Thanh Niên', 'Phạm Hương Giang', 'Hoàng Minh & Thảo Ly'];
+      const sampleIds = [1, 2, 3, 4, 5, '1', '2', '3', '4', '5'];
+      const realData = (Array.isArray(data) ? data : []).filter(m => !sampleNames.includes(m?.name) && !sampleIds.includes(m?.id));
+      return res.status(200).json({ success: true, data: realData });
     }
 
     if (section === 'quoc_khanh_flags') {
@@ -177,7 +244,42 @@ exports.getSection = async (req, res) => {
       return res.status(200).json({ success: true, data });
     }
 
+    // Trả về Voucher từ bảng quản trị Voucher hoặc từ Website Section
+    if (section === 'vouchers' || section === 'event_vouchers') {
+      try {
+        const now = new Date();
+        const dbVouchers = await Voucher.find({ 
+          isActive: true,
+          $and: [
+            { $or: [{ startDate: null }, { startDate: { $lte: now } }] },
+            { $or: [{ endDate: null }, { endDate: { $gte: now } }] }
+          ]
+        }).sort({ createdAt: -1 });
+
+        if (dbVouchers && dbVouchers.length > 0) {
+          const formatted = dbVouchers.map(formatVoucherForWebsite);
+          return res.status(200).json({ success: true, data: formatted });
+        }
+      } catch (err) {
+        console.error("Error fetching vouchers from Voucher model:", err);
+      }
+      return res.status(200).json({ success: true, data: data && data.length > 0 ? data : [] });
+    }
+
     if (section === 'quoc_khanh_gifts') {
+      try {
+        const activeVouchers = await Voucher.find({ isActive: true }).sort({ createdAt: -1 });
+        if (activeVouchers && activeVouchers.length > 0) {
+          const giftsFromVouchers = activeVouchers.map(v => ({
+            title: v.title,
+            code: v.code,
+            value: Number(v.discountType) === 1 ? `Giảm ${v.discountValue}%` : `Giảm ${Number(v.discountValue).toLocaleString('vi-VN')}đ`,
+            desc: v.description || (v.minOrderValue > 0 ? `Đơn từ ${Number(v.minOrderValue).toLocaleString('vi-VN')}đ` : 'Áp dụng mọi dịch vụ')
+          }));
+          return res.status(200).json({ success: true, data: giftsFromVouchers });
+        }
+      } catch (e) {}
+
       if (!data || (Array.isArray(data) && data.length === 0)) {
         data = DEFAULT_QUOC_KHANH_GIFTS;
       }
@@ -544,26 +646,102 @@ exports.claimVoucher = async (req, res) => {
     }
 
     const cleanPhone = String(phone).trim();
+    const normPhone = normalizePhoneNumber(cleanPhone);
 
-    // 1. Check if Phone or IP has already claimed ANY voucher
+    // 1. Kiểm tra xem Số điện thoại hoặc IP đã từng nhận mã voucher trước đó hay chưa
     let claimsData = await WEBSITE.findOne({ section: 'voucher_claims' });
     if (!claimsData) {
       claimsData = new WEBSITE({ section: 'voucher_claims', data: [] });
     }
 
-    const hasClaimedByPhone = claimsData.data.some(c => String(c.phone).trim() === cleanPhone);
+    const existingClaim = claimsData.data.find(c => normalizePhoneNumber(c.phone) === normPhone);
+    let existingVoucherWithSubCode = null;
+
+    if (!existingClaim && normPhone) {
+      try {
+        existingVoucherWithSubCode = await Voucher.findOne({
+          "generatedCodes.claimedPhone": { $regex: new RegExp(normPhone.slice(-9) + '$') }
+        });
+      } catch (err) {}
+    }
+
     const hasClaimedByIp = clientIp && clientIp !== '127.0.0.1' && clientIp !== '::1' && clientIp !== 'localhost'
       ? claimsData.data.some(c => c.ip === clientIp) 
       : false;
 
-    if (hasClaimedByPhone || hasClaimedByIp) {
+    if (existingClaim || existingVoucherWithSubCode || hasClaimedByIp) {
       return res.status(400).json({ 
         success: false, 
-        message: "Số điện thoại hoặc thiết bị này đã từng săn Voucher trước đó! Mỗi khách hàng chỉ được săn 1 lần." 
+        alreadyClaimed: true,
+        message: `Số điện thoại ${cleanPhone} đã từng nhận mã Voucher trước đó! Mỗi số điện thoại chỉ được nhận 1 mã voucher khi quay thưởng.` 
       });
     }
 
-    // 2. Fetch vouchers section
+    // 2. Check Voucher model first
+    const cleanCode = voucherCode ? String(voucherCode).trim().toUpperCase() : null;
+    let targetVoucherDoc = null;
+
+    if (cleanCode || voucherId) {
+      try {
+        const query = cleanCode ? { code: cleanCode } : { _id: voucherId };
+        targetVoucherDoc = await Voucher.findOne(query);
+      } catch (err) {}
+    }
+
+    if (targetVoucherDoc) {
+      if (targetVoucherDoc.usageLimit && targetVoucherDoc.usageLimit > 0 && targetVoucherDoc.usedCount >= targetVoucherDoc.usageLimit) {
+        return res.status(400).json({ 
+          success: false, 
+          isOutStock: true,
+          message: "Đã hết số lượng ưu đãi, Quý khách có thể trải nghiệm dịch vụ trên website của Long Wedding, hoặc liên hệ đến cửa hàng để có những ưu đãi khác" 
+        });
+      }
+      await targetVoucherDoc.save();
+
+      const formatted = formatVoucherForWebsite(targetVoucherDoc);
+
+      const newClaim = {
+        id: Date.now(),
+        voucherId: targetVoucherDoc._id,
+        voucherCode: targetVoucherDoc.code,
+        voucherTitle: targetVoucherDoc.title,
+        name,
+        phone: cleanPhone,
+        address: address || '',
+        ip: clientIp,
+        claimedAt: new Date().toISOString()
+      };
+      claimsData.data.push(newClaim);
+      claimsData.markModified('data');
+      await claimsData.save();
+
+      let bookingsData = await WEBSITE.findOne({ section: 'bookings' });
+      if (!bookingsData) {
+        bookingsData = new WEBSITE({ section: 'bookings', data: [] });
+      }
+      bookingsData.data.push({
+        id: Date.now() + 1,
+        name,
+        phone: cleanPhone,
+        address: address || '',
+        service: `[SĂN VOUCHER] ${targetVoucherDoc.code} - ${formatted.value}`,
+        date: new Date().toISOString().split('T')[0],
+        time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+        status: 'chua_lien_he',
+        createdAt: new Date().toISOString()
+      });
+      bookingsData.markModified('data');
+      await bookingsData.save();
+
+      return res.status(200).json({
+        success: true,
+        message: "Săn Voucher thành công!",
+        voucherCode: targetVoucherDoc.code,
+        voucher: formatted
+      });
+    }
+
+    // Fallback: Fetch vouchers section
     let vouchersData = await WEBSITE.findOne({ section: 'vouchers' });
     if (!vouchersData || !Array.isArray(vouchersData.data)) {
       return res.status(400).json({ success: false, message: "Hiện tại hệ thống không tìm thấy danh sách Voucher!" });
@@ -662,9 +840,11 @@ exports.getQuocKhanhAllData = async (req, res) => {
       WEBSITE.findOne({ section: 'quoc_khanh_gifts' })
     ]);
 
-    let messages = messagesDoc && Array.isArray(messagesDoc.data) && messagesDoc.data.length > 0 
-      ? messagesDoc.data 
-      : DEFAULT_QUOC_KHANH_MESSAGES;
+    const sampleNames = ['Nguyễn Văn Hùng', 'Trần Thị Mai & Lê Quang', 'Đoàn Thanh Niên', 'Phạm Hương Giang', 'Hoàng Minh & Thảo Ly'];
+    const sampleIds = [1, 2, 3, 4, 5, '1', '2', '3', '4', '5'];
+    let messages = (messagesDoc && Array.isArray(messagesDoc.data))
+      ? messagesDoc.data.filter(m => !sampleNames.includes(m?.name) && !sampleIds.includes(m?.id))
+      : [];
 
     let flagCount = DEFAULT_QUOC_KHANH_FLAGS;
     if (flagsDoc) {
@@ -676,9 +856,24 @@ exports.getQuocKhanhAllData = async (req, res) => {
       ? dealsDoc.data 
       : DEFAULT_QUOC_KHANH_DEALS;
 
-    let gifts = giftsDoc && Array.isArray(giftsDoc.data) && giftsDoc.data.length > 0 
-      ? giftsDoc.data 
-      : DEFAULT_QUOC_KHANH_GIFTS;
+    let gifts = [];
+    try {
+      const activeVouchers = await Voucher.find({ isActive: true }).sort({ createdAt: -1 });
+      if (activeVouchers && activeVouchers.length > 0) {
+        gifts = activeVouchers.map(v => ({
+          title: v.title,
+          code: v.code,
+          value: Number(v.discountType) === 1 ? `Giảm ${v.discountValue}%` : `Giảm ${Number(v.discountValue).toLocaleString('vi-VN')}đ`,
+          desc: v.description || (v.minOrderValue > 0 ? `Đơn từ ${Number(v.minOrderValue).toLocaleString('vi-VN')}đ` : 'Áp dụng mọi dịch vụ')
+        }));
+      }
+    } catch (e) {}
+
+    if (gifts.length === 0) {
+      gifts = giftsDoc && Array.isArray(giftsDoc.data) && giftsDoc.data.length > 0 
+        ? giftsDoc.data 
+        : DEFAULT_QUOC_KHANH_GIFTS;
+    }
 
     return res.status(200).json({
       success: true,
@@ -696,41 +891,279 @@ exports.getQuocKhanhAllData = async (req, res) => {
 };
 
 /**
- * Gửi lời tri ân mừng Quốc Khánh & tự động thắp sáng cờ Tổ quốc (+1)
+ * Gửi lời tri ân mừng Quốc Khánh: Backend chọn chương trình và cấp 1 mã code độc nhất thuộc chương trình đó
  */
 exports.addQuocKhanhTribute = async (req, res) => {
   try {
-    const { name, location, text } = req.body;
+    const { name, phone, province, commune, hamlet, location, text } = req.body;
 
     if (!text || !text.trim()) {
       return res.status(400).json({ success: false, message: "Vui lòng nhập nội dung lời tri ân / chúc mừng!" });
     }
 
-    // 1. Thêm lời chúc vào mục quoc_khanh_messages
+    const cleanName = (name && name.trim()) ? name.trim() : 'Người con Đất Việt';
+    const cleanPhone = phone ? String(phone).trim() : '';
+    const normPhone = normalizePhoneNumber(cleanPhone);
+    const cleanLocation = location ? String(location).trim() : 'Việt Nam';
+
+    // 1. Kiểm tra xem SĐT này đã từng gửi lời chúc hoặc nhận voucher trước đó chưa (Mỗi SĐT chỉ được gửi 1 lần)
     let messagesDoc = await WEBSITE.findOne({ section: 'quoc_khanh_messages' });
     if (!messagesDoc) {
-      messagesDoc = new WEBSITE({ section: 'quoc_khanh_messages', data: [...DEFAULT_QUOC_KHANH_MESSAGES] });
+      messagesDoc = new WEBSITE({ section: 'quoc_khanh_messages', data: [] });
+    }
+
+    let claimsDoc = await WEBSITE.findOne({ section: 'voucher_claims' });
+    if (!claimsDoc) {
+      claimsDoc = new WEBSITE({ section: 'voucher_claims', data: [] });
+    }
+
+    const existingMessage = normPhone && Array.isArray(messagesDoc.data) 
+      ? messagesDoc.data.find(m => normalizePhoneNumber(m.phone) === normPhone) 
+      : null;
+    const existingClaim = normPhone && Array.isArray(claimsDoc.data) 
+      ? claimsDoc.data.find(c => normalizePhoneNumber(c.phone) === normPhone) 
+      : null;
+
+    let existingVoucherDoc = null;
+    let existingSubCode = null;
+
+    if (!existingClaim && normPhone) {
+      try {
+        const vDoc = await Voucher.findOne({
+          "generatedCodes.claimedPhone": { $regex: new RegExp(normPhone.slice(-9) + '$') }
+        });
+        if (vDoc && Array.isArray(vDoc.generatedCodes)) {
+          existingSubCode = vDoc.generatedCodes.find(c => normalizePhoneNumber(c.claimedPhone) === normPhone);
+          if (existingSubCode) {
+            existingVoucherDoc = vDoc;
+          }
+        }
+      } catch (err) {}
+    }
+
+    // NẾU SĐT ĐÃ TỒN TẠI (ĐÃ GỬI LỜI CHÚC TRƯỚC ĐÓ HOẶC ĐÃ CÓ MÃ VOUCHER)
+    if (existingMessage || existingClaim || (existingSubCode && existingVoucherDoc)) {
+      let existingVoucher = null;
+      if (existingClaim) {
+        existingVoucher = {
+          id: existingClaim.voucherId || 'existing',
+          code: existingClaim.voucherCode,
+          title: existingClaim.voucherTitle || 'Voucher Tri Ân',
+          value: existingClaim.voucherValue || existingClaim.voucherTitle || 'Ưu đãi Tri Ân'
+        };
+      } else if (existingSubCode && existingVoucherDoc) {
+        existingVoucher = {
+          ...formatVoucherForWebsite(existingVoucherDoc),
+          code: existingSubCode.code,
+          assignedCode: existingSubCode.code
+        };
+      } else if (existingMessage && existingMessage.voucherCode) {
+        existingVoucher = {
+          code: existingMessage.voucherCode,
+          title: existingMessage.voucherTitle || 'Voucher Tri Ân',
+          value: existingMessage.voucherValue || 'Ưu đãi Tri Ân'
+        };
+      }
+
+      return res.status(200).json({
+        success: false,
+        alreadySubmitted: true,
+        message: "Cảm ơn bạn đã gửi lời chúc. Lời chúc của bạn đã được ghi nhận trước đó, xin cảm ơn",
+        voucher: existingVoucher
+      });
+    }
+
+    let selectedVoucher = null;
+    // SĐT mới chưa từng nhận Voucher -> Tiến hành rút Voucher mới từ Database
+    const now = new Date();
+    try {
+      const activeVouchers = await Voucher.find({
+        isActive: true,
+        $and: [
+          { $or: [{ startDate: null }, { startDate: { $lte: now } }] },
+          { $or: [{ endDate: null }, { endDate: { $gte: now } }] },
+          { $or: [{ usageLimit: null }, { usageLimit: 0 }, { $expr: { $lt: ["$usedCount", "$usageLimit"] } }] }
+        ]
+      }).sort({ createdAt: -1 });
+
+      if (activeVouchers && activeVouchers.length > 0) {
+        let totalWeight = 0;
+        const weightedList = activeVouchers.map(v => {
+          const rate = Number(v.winningRate !== undefined ? v.winningRate : 50);
+          const weight = rate > 0 ? rate : 10;
+          totalWeight += weight;
+          return { voucher: v, weight };
+        });
+
+        let randomNum = Math.random() * totalWeight;
+        let chosenVoucherDoc = null;
+
+        for (const item of weightedList) {
+          if (randomNum <= item.weight) {
+            chosenVoucherDoc = item.voucher;
+            break;
+          }
+          randomNum -= item.weight;
+        }
+
+        if (!chosenVoucherDoc) {
+          chosenVoucherDoc = activeVouchers[Math.floor(Math.random() * activeVouchers.length)];
+        }
+
+        if (!chosenVoucherDoc.generatedCodes) {
+          chosenVoucherDoc.generatedCodes = [];
+        }
+
+        let assignedCode = null;
+        const availableSubCode = chosenVoucherDoc.generatedCodes.find(c => !c.isClaimed && !c.isUsed);
+
+        if (availableSubCode) {
+          availableSubCode.isClaimed = true;
+          availableSubCode.claimedName = cleanName;
+          availableSubCode.claimedPhone = cleanPhone;
+          availableSubCode.claimedAt = new Date();
+          assignedCode = availableSubCode.code;
+        } else {
+          const existingSet = new Set(chosenVoucherDoc.generatedCodes.map(c => c.code.toUpperCase()));
+          let newCodeStr = '';
+          for (let i = 0; i < 20; i++) {
+            newCodeStr = `${chosenVoucherDoc.code}-${generateRandomSuffix(4)}`;
+            if (!existingSet.has(newCodeStr)) break;
+          }
+          if (!newCodeStr) newCodeStr = `${chosenVoucherDoc.code}-${Date.now().toString().slice(-4)}`;
+
+          const newSubCodeObj = {
+            code: newCodeStr,
+            isClaimed: true,
+            claimedName: cleanName,
+            claimedPhone: cleanPhone,
+            claimedAt: new Date(),
+            isUsed: false,
+            createdAt: new Date()
+          };
+          chosenVoucherDoc.generatedCodes.push(newSubCodeObj);
+          assignedCode = newCodeStr;
+        }
+
+        chosenVoucherDoc.markModified('generatedCodes');
+        await chosenVoucherDoc.save();
+
+        selectedVoucher = formatVoucherForWebsite(chosenVoucherDoc);
+        selectedVoucher.code = assignedCode;
+        selectedVoucher.assignedCode = assignedCode;
+
+        // Ghi nhận claim vào voucher_claims cho SĐT mới
+        claimsDoc.data.push({
+          id: Date.now(),
+          voucherId: selectedVoucher._id || selectedVoucher.id,
+          voucherCode: selectedVoucher.code,
+          voucherTitle: selectedVoucher.title,
+          voucherValue: selectedVoucher.value,
+          name: cleanName,
+          phone: cleanPhone,
+          location: cleanLocation,
+          source: 'quoc_khanh_tribute',
+          claimedAt: new Date().toISOString()
+        });
+        claimsDoc.markModified('data');
+        await claimsDoc.save();
+      }
+    } catch (err) {
+      console.error("Lỗi khi rút voucher trong addQuocKhanhTribute:", err);
+    }
+
+    if (selectedVoucher) {
+      selectedVoucher.userName = cleanName;
+      selectedVoucher.userPhone = cleanPhone;
+      selectedVoucher.userLocation = cleanLocation;
+      if (!selectedVoucher.claimedAt) {
+        selectedVoucher.claimedAt = new Date().toISOString();
+      }
+    }
+
+    // 2. Tự động thêm vào danh sách Bookings (Leads) nếu có SĐT
+    if (cleanPhone) {
+      try {
+        let bookingsDoc = await WEBSITE.findOne({ section: 'bookings' });
+        if (!bookingsDoc) {
+          bookingsDoc = new WEBSITE({ section: 'bookings', data: [] });
+        }
+        bookingsDoc.data.unshift({
+          id: Date.now() + 1,
+          name: cleanName,
+          phone: cleanPhone,
+          service: selectedVoucher 
+            ? `[TRI ÂN QUỐC KHÁNH 2/9] ${selectedVoucher.title} (${selectedVoucher.code})`
+            : `[TRI ÂN QUỐC KHÁNH 2/9] Khách gửi lời tri ân`,
+          promoCode: selectedVoucher ? selectedVoucher.code : 'QUOCKHANH2026',
+          date: new Date().toISOString().split('T')[0],
+          time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+          note: `[LỜI TRI ÂN 2/9]: "${text.trim().substring(0, 150)}" | Địa chỉ: ${cleanLocation}`,
+          status: 'chua_lien_he',
+          source: 'quoc_khanh_tribute_voucher',
+          createdAt: new Date().toISOString()
+        });
+        bookingsDoc.markModified('data');
+        await bookingsDoc.save();
+      } catch (e) {}
+    }
+
+    // 3. Thêm lời chúc vào mục quoc_khanh_messages
+    if (!messagesDoc) {
+      messagesDoc = await WEBSITE.findOne({ section: 'quoc_khanh_messages' });
+      if (!messagesDoc) {
+        messagesDoc = new WEBSITE({ section: 'quoc_khanh_messages', data: [] });
+      }
     }
 
     const newTribute = {
       id: Date.now(),
-      name: (name && name.trim()) ? name.trim() : 'Người con Đất Việt',
-      location: (location && location.trim()) ? location.trim() : 'Hà Nội',
+      name: cleanName,
+      phone: cleanPhone,
+      province: province || '',
+      commune: commune || '',
+      hamlet: hamlet || '',
+      location: cleanLocation,
       text: text.trim(),
+      voucherCode: selectedVoucher ? selectedVoucher.code : null,
+      voucherTitle: selectedVoucher ? selectedVoucher.title : null,
+      voucherValue: selectedVoucher ? selectedVoucher.value : null,
       time: 'Vừa xong',
       createdAt: new Date().toISOString()
     };
 
-    // Đưa tin nhắn mới lên đầu mảng
     messagesDoc.data.unshift(newTribute);
-    // Giới hạn lưu tối đa 500 lời chúc gần nhất để tối ưu hiệu năng
     if (messagesDoc.data.length > 500) {
       messagesDoc.data = messagesDoc.data.slice(0, 500);
     }
     messagesDoc.markModified('data');
     await messagesDoc.save();
 
-    // 2. Tự động tăng số lượt thắp sáng cờ Tổ quốc (+1)
+    // 4. Lưu vào feedback
+    try {
+      let feedbackDoc = await WEBSITE.findOne({ section: 'feedback' });
+      if (!feedbackDoc) {
+        feedbackDoc = new WEBSITE({ section: 'feedback', data: [] });
+      }
+      feedbackDoc.data.unshift({
+        id: Date.now() + 2,
+        type: 'quoc_khanh_tribute',
+        name: cleanName,
+        phone: cleanPhone,
+        location: cleanLocation,
+        text: text.trim(),
+        voucherCode: selectedVoucher ? selectedVoucher.code : null,
+        voucherTitle: selectedVoucher ? selectedVoucher.title : null,
+        createdAt: new Date().toISOString()
+      });
+      if (feedbackDoc.data.length > 500) {
+        feedbackDoc.data = feedbackDoc.data.slice(0, 500);
+      }
+      feedbackDoc.markModified('data');
+      await feedbackDoc.save();
+    } catch (e) {}
+
+    // 5. Tự động tăng số lượt thắp sáng cờ Tổ quốc (+1)
     let flagsDoc = await WEBSITE.findOne({ section: 'quoc_khanh_flags' });
     let currentCount = DEFAULT_QUOC_KHANH_FLAGS;
     if (!flagsDoc) {
@@ -751,10 +1184,23 @@ exports.addQuocKhanhTribute = async (req, res) => {
     }
     await flagsDoc.save();
 
+    if (!selectedVoucher) {
+      return res.status(200).json({
+        success: true,
+        isOutOfVouchers: true,
+        message: "Voucher đã hết, cảm ơn quý khách đã quan tâm đến sự kiện. Hẹn quý khách vào sự kiện tiếp theo",
+        data: newTribute,
+        voucher: null,
+        flagCount: currentCount
+      });
+    }
+
     return res.status(200).json({
       success: true,
-      message: "Gửi lời tri ân và thắp sáng cờ Tổ quốc thành công! 🇻🇳",
+      isOutOfVouchers: false,
+      message: "Gửi lời tri ân và nhận Voucher tri ân thành công! 🇻🇳",
       data: newTribute,
+      voucher: selectedVoucher,
       flagCount: currentCount
     });
   } catch (error) {
@@ -763,9 +1209,6 @@ exports.addQuocKhanhTribute = async (req, res) => {
   }
 };
 
-/**
- * Thắp sáng cờ đỏ sao vàng (+1 lượt)
- */
 exports.incrementQuocKhanhFlag = async (req, res) => {
   try {
     let flagsDoc = await WEBSITE.findOne({ section: 'quoc_khanh_flags' });
@@ -858,11 +1301,25 @@ exports.claimQuocKhanhGift = async (req, res) => {
     }
 
     const cleanPhone = String(phone).trim();
+    const normPhone = normalizePhoneNumber(cleanPhone);
 
-    // 1. Lưu vào voucher_claims
+    // 1. Kiểm tra xem SĐT đã nhận quà / voucher trước đó hay chưa
     let claimsDoc = await WEBSITE.findOne({ section: 'voucher_claims' });
     if (!claimsDoc) {
       claimsDoc = new WEBSITE({ section: 'voucher_claims', data: [] });
+    }
+
+    const existingClaim = claimsDoc.data.find(c => normalizePhoneNumber(c.phone) === normPhone);
+    if (existingClaim) {
+      return res.status(400).json({
+        success: false,
+        alreadyClaimed: true,
+        message: `Số điện thoại ${cleanPhone} đã nhận mã voucher trước đó! Mỗi số điện thoại chỉ được nhận 1 mã voucher khi quay thưởng.`
+      });
+    }
+
+    if (giftCode) {
+      // Claimed gift on website (do not inc contract usedCount)
     }
 
     const newClaim = {
@@ -1006,3 +1463,89 @@ exports.updateQuocKhanhGifts = async (req, res) => {
   }
 };
 
+
+/**
+ * Kiểm tra & Áp dụng Voucher công khai cho Website
+ */
+exports.validateVoucherPublic = async (req, res) => {
+  try {
+    let { code, orderTotal, khachHangId, soDienThoai } = req.body;
+    if (!code || typeof code !== 'string' || !code.trim()) {
+      return res.status(400).json({ success: false, message: "Vui lòng nhập mã Voucher" });
+    }
+
+    code = code.trim().toUpperCase().replace(/\s+/g, '');
+    
+    // Tìm theo mã chính hoặc mã con trong generatedCodes
+    const voucher = await Voucher.findOne({
+      $or: [
+        { code },
+        { "generatedCodes.code": code }
+      ]
+    });
+
+    if (!voucher) {
+      return res.status(404).json({ success: false, message: `Mã Voucher "${code}" không tồn tại trên hệ thống` });
+    }
+
+    // Kiểm tra mã con đã dùng chưa
+    let matchedSubCode = null;
+    if (Array.isArray(voucher.generatedCodes)) {
+      matchedSubCode = voucher.generatedCodes.find(c => c.code.toUpperCase() === code);
+    }
+    if (matchedSubCode && matchedSubCode.isUsed) {
+      return res.status(400).json({ success: false, message: `Mã code "${code}" này đã được sử dụng trước đó` });
+    }
+
+    if (!voucher.isActive) {
+      return res.status(400).json({ success: false, message: `Voucher "${code}" hiện đang tạm ngừng áp dụng` });
+    }
+
+    const now = new Date();
+    if (voucher.startDate && new Date(voucher.startDate) > now) {
+      return res.status(400).json({ success: false, message: `Voucher "${code}" chỉ có hiệu lực từ ngày ${new Date(voucher.startDate).toLocaleDateString('vi-VN')}` });
+    }
+
+    if (voucher.endDate && new Date(voucher.endDate) < now) {
+      return res.status(400).json({ success: false, message: `Voucher "${code}" đã hết hạn sử dụng vào ngày ${new Date(voucher.endDate).toLocaleDateString('vi-VN')}` });
+    }
+
+    if (!matchedSubCode && voucher.usageLimit && voucher.usageLimit > 0 && voucher.usedCount >= voucher.usageLimit) {
+      return res.status(400).json({ success: false, message: `Voucher "${code}" đã hết lượt sử dụng` });
+    }
+
+    const total = Number(orderTotal) || 0;
+    if (voucher.minOrderValue && total < voucher.minOrderValue) {
+      return res.status(400).json({ success: false, message: `Voucher "${code}" yêu cầu đơn hàng từ ${voucher.minOrderValue.toLocaleString('vi-VN')} đ` });
+    }
+
+    let discountAmount = 0;
+    if (Number(voucher.discountType) === 1) {
+      discountAmount = (total * voucher.discountValue) / 100;
+      if (voucher.maxDiscount && voucher.maxDiscount > 0 && discountAmount > voucher.maxDiscount) {
+        discountAmount = voucher.maxDiscount;
+      }
+    } else {
+      discountAmount = voucher.discountValue;
+    }
+
+    discountAmount = Math.min(total, Math.round(discountAmount));
+    const finalTotal = Math.max(0, total - discountAmount);
+
+    return res.status(200).json({
+      success: true,
+      message: `Áp dụng mã Voucher "${code}" thành công!`,
+      data: {
+        voucher: {
+          ...formatVoucherForWebsite(voucher),
+          appliedCode: code,
+          isSubCode: Boolean(matchedSubCode)
+        },
+        discountAmount,
+        finalTotal
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};

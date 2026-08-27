@@ -54,12 +54,14 @@ function ensurePaymentProgress(contract) {
     // 2. Tính tổng sau khi trừ giảm giá của cả hợp đồng
     const giamGiaValue = Number(tt.giamGia) || 0;
     const loaiGiamGia = Number(tt.loaiGiamGia) || 0;
+    const voucherGiamGia = Number(tt.voucherGiamGia) || 0;
     let tongSauGiam = tongGoc;
     if (loaiGiamGia === 1) {
         tongSauGiam = tongGoc - (tongGoc * giamGiaValue / 100);
     } else {
         tongSauGiam = tongGoc - giamGiaValue;
     }
+    tongSauGiam = tongSauGiam - voucherGiamGia;
     tongSauGiam = Math.max(0, tongSauGiam);
 
     // 3. Tính số tiền khách hàng đã thanh toán
@@ -205,6 +207,25 @@ async function create(req, res) {
         }
 
         await hopDong.save();
+
+        // Ghi nhận sử dụng voucher nếu có
+        if (req.body.thanhToan?.voucherCode || req.body.thanhToan?.voucherId) {
+            try {
+                const voucherService = require("./voucher.service");
+                await voucherService.recordUsage({
+                    voucherCode: req.body.thanhToan.voucherCode,
+                    voucherId: req.body.thanhToan.voucherId,
+                    hopDongId: hopDong._id,
+                    maHopDong: hopDong.maHopDong,
+                    khachHangId: hopDong.khachHang1,
+                    tenKhachHang: req.body.tenKhachHang1 || "",
+                    soDienThoai: req.body.soDienThoaiKH1 || "",
+                    giamGiaAmount: req.body.thanhToan.voucherGiamGia || 0
+                });
+            } catch (vErr) {
+                console.error("Lỗi ghi nhận voucher usage:", vErr);
+            }
+        }
         console.log("Đã tạo hợp đồng mã số: " + req.body.maHopDong + " thành công !");
         
         let tenKhach = "";

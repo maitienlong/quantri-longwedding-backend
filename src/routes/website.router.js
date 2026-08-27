@@ -10,6 +10,7 @@ router.post("/upload", authMiddleware, upload.single("image"), websiteService.up
 
 // Route công khai để săn Voucher
 router.post("/vouchers/claim", websiteService.claimVoucher);
+router.post("/vouchers/validate", websiteService.validateVoucherPublic);
 
 // ==========================================
 // ROUTES ĐẠI LỄ QUỐC KHÁNH 2/9 (/quoc-khanh)

@@ -77,6 +77,7 @@ const thiduaRoutes = require("./routes/thidua.router");
 const sepayRoutes = require("./routes/sepay.router");
 const baoCaoRoutes = require("./routes/baoCao.router");
 const donViNhanTienRoutes = require("./routes/donViNhanTien.router");
+const voucherRoutes = require("./routes/voucher.router");
 
 app.use('/auth', authRoutes);
 app.use('/khachHang', khachHangRoutes);
@@ -95,6 +96,8 @@ app.use('/api/website', websiteRoutes);
 app.use('/api/album', albumRoutes);
 app.use('/api/log', logRoutes);
 app.use('/api/visitors', visitorsRoutes);
+app.use('/api/vouchers', voucherRoutes);
+app.use('/vouchers', voucherRoutes);
 
 app.get("/", (req, res) => {
   res.send("API is running... " + process.env.VERSION);

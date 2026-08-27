@@ -107,11 +107,65 @@ function getTrend(current = 0, previous = 0) {
 }
 
 // =========================================================================
+// =========================================================================
+// SCHEDULE EXTRACTION HELPERS FOR PERIOD REPORTING
+// =========================================================================
+
+const SCHEDULE_DATE_KEYS = [
+    { key: 'ngayChup', label: 'Chụp hình', icon: '📸' },
+    { key: 'ngayAnHoi', label: 'Ăn hỏi', icon: '💍' },
+    { key: 'ngayCuoi', label: 'Ngày cưới', icon: '👰' },
+    { key: 'ngayChinhAnh', label: 'Chỉnh ảnh', icon: '🎨' },
+    { key: 'ngayTraAnh', label: 'Trả ảnh', icon: '🖼️' },
+    { key: 'ngayChuyenInAnh', label: 'Chuyển in', icon: '🖨️' },
+    { key: 'ngayMuonDo', label: 'Mượn đồ', icon: '👗' },
+    { key: 'ngayTraDo', label: 'Trả đồ', icon: '👔' }
+];
+
+function buildScheduleQuery(startDate, endDate) {
+    return [
+        { "cacNgay.ngayChup": { $gte: startDate, $lte: endDate } },
+        { "cacNgay.ngayAnHoi": { $gte: startDate, $lte: endDate } },
+        { "cacNgay.ngayCuoi": { $gte: startDate, $lte: endDate } },
+        { "cacNgay.ngayChinhAnh": { $gte: startDate, $lte: endDate } },
+        { "cacNgay.ngayTraAnh": { $gte: startDate, $lte: endDate } },
+        { "cacNgay.ngayChuyenInAnh": { $gte: startDate, $lte: endDate } },
+        { "cacNgay.ngayMuonDo": { $gte: startDate, $lte: endDate } },
+        { "cacNgay.ngayTraDo": { $gte: startDate, $lte: endDate } }
+    ];
+}
+
+function extractMatchedSchedules(hd, startDate, endDate) {
+    const sTime = new Date(startDate).getTime();
+    const eTime = new Date(endDate).getTime();
+    const matched = [];
+
+    if (hd.cacNgay) {
+        for (const item of SCHEDULE_DATE_KEYS) {
+            const val = hd.cacNgay[item.key];
+            if (val) {
+                const d = new Date(val);
+                const t = d.getTime();
+                if (!isNaN(t) && t >= sTime && t <= eTime) {
+                    matched.push({
+                        type: item.key,
+                        label: item.label,
+                        icon: item.icon,
+                        date: d
+                    });
+                }
+            }
+        }
+    }
+    return matched;
+}
+
+// =========================================================================
 // CORE STATS COMPUTATION FOR A DATE RANGE
 // =========================================================================
 
 async function computeMetricsForRange(startDate, endDate) {
-    // 1. Fetch contracts in range
+    // 1. Fetch contracts signed in range (Ký trong kỳ)
     const contracts = await HopDong.find({
         maHopDong: { $ne: "CH-CHUNG" },
         ngayHopDong: { $gte: startDate, $lte: endDate }
@@ -133,7 +187,31 @@ async function computeMetricsForRange(startDate, endDate) {
         conNoCuaHDKy += debt;
     });
 
-    // 2. Fetch expenses in range
+    // 2. Fetch contracts having schedule in range (Doanh số theo lịch trong kỳ)
+    const scheduleConditions = buildScheduleQuery(startDate, endDate);
+    const scheduledContracts = await HopDong.find({
+        maHopDong: { $ne: "CH-CHUNG" },
+        $or: scheduleConditions
+    }).select("maHopDong ngayHopDong thanhToan cacNgay soanDo nguoiPhucVu giaiDoan dichVuChinh").lean();
+
+    const soLuongHopDongTheoLich = scheduledContracts.length;
+    let tongDoanhSoTheoLich = 0;
+    let daThuTheoLich = 0;
+    let conNoTheoLich = 0;
+
+    scheduledContracts.forEach(hd => {
+        const val = Number(hd.thanhToan?.tongGiaTriSauGiam ?? hd.thanhToan?.tongGiaTri ?? 0);
+        const paid = Number(hd.thanhToan?.khachHangDaThanhToan ?? 0);
+        const debt = Number(hd.thanhToan?.conLai ?? Math.max(0, val - paid));
+
+        tongDoanhSoTheoLich += val;
+        daThuTheoLich += paid;
+        conNoTheoLich += debt;
+    });
+
+    const tyLeThuHoiTheoLich = tongDoanhSoTheoLich > 0 ? Number(((daThuTheoLich / tongDoanhSoTheoLich) * 100).toFixed(1)) : 0;
+
+    // 3. Fetch expenses in range
     const expenses = await ChiTieu.find({
         date: { $gte: startDate, $lte: endDate }
     }).lean();
@@ -180,6 +258,11 @@ async function computeMetricsForRange(startDate, endDate) {
         tongTienHopDong,
         soTienDaThu,
         soTienConNo: conNoCuaHDKy,
+        soLuongHopDongTheoLich,
+        tongDoanhSoTheoLich,
+        daThuTheoLich,
+        conNoTheoLich,
+        tyLeThuHoiTheoLich,
         tongTienKhoanChi,
         laiRong,
         tySuatLaiRong
@@ -201,6 +284,34 @@ function buildComparison(current, previous) {
             diff: current.tongTienHopDong - previous.tongTienHopDong,
             growthPercent: calcGrowth(current.tongTienHopDong, previous.tongTienHopDong),
             trend: getTrend(current.tongTienHopDong, previous.tongTienHopDong)
+        },
+        soLuongHopDongTheoLich: {
+            current: current.soLuongHopDongTheoLich || 0,
+            previous: previous.soLuongHopDongTheoLich || 0,
+            diff: (current.soLuongHopDongTheoLich || 0) - (previous.soLuongHopDongTheoLich || 0),
+            growthPercent: calcGrowth(current.soLuongHopDongTheoLich, previous.soLuongHopDongTheoLich),
+            trend: getTrend(current.soLuongHopDongTheoLich, previous.soLuongHopDongTheoLich)
+        },
+        tongDoanhSoTheoLich: {
+            current: current.tongDoanhSoTheoLich || 0,
+            previous: previous.tongDoanhSoTheoLich || 0,
+            diff: (current.tongDoanhSoTheoLich || 0) - (previous.tongDoanhSoTheoLich || 0),
+            growthPercent: calcGrowth(current.tongDoanhSoTheoLich, previous.tongDoanhSoTheoLich),
+            trend: getTrend(current.tongDoanhSoTheoLich, previous.tongDoanhSoTheoLich)
+        },
+        daThuTheoLich: {
+            current: current.daThuTheoLich || 0,
+            previous: previous.daThuTheoLich || 0,
+            diff: (current.daThuTheoLich || 0) - (previous.daThuTheoLich || 0),
+            growthPercent: calcGrowth(current.daThuTheoLich, previous.daThuTheoLich),
+            trend: getTrend(current.daThuTheoLich, previous.daThuTheoLich)
+        },
+        conNoTheoLich: {
+            current: current.conNoTheoLich || 0,
+            previous: previous.conNoTheoLich || 0,
+            diff: (current.conNoTheoLich || 0) - (previous.conNoTheoLich || 0),
+            growthPercent: calcGrowth(current.conNoTheoLich, previous.conNoTheoLich),
+            trend: getTrend(current.conNoTheoLich, previous.conNoTheoLich)
         },
         soTienDaThu: {
             current: current.soTienDaThu,
@@ -557,6 +668,32 @@ async function getBaoCaoKinhDoanh(req, res) {
         .limit(10)
         .lean();
 
+        // 3. Fetch full list of contracts with schedules in the selected period
+        const scheduleConditions = buildScheduleQuery(selectedCurrentRange.startDate, selectedCurrentRange.endDate);
+        const scheduledContractsRaw = await HopDong.find({
+            maHopDong: { $ne: "CH-CHUNG" },
+            $or: scheduleConditions
+        })
+        .populate("khachHang1", "tenKhachHang soDienThoai diaChi")
+        .populate("khachHang2", "tenKhachHang soDienThoai diaChi")
+        .populate("gioHang.dichVu", "tenDichVu")
+        .lean();
+
+        const scheduledContracts = scheduledContractsRaw.map(hd => {
+            const matchedSchedules = extractMatchedSchedules(hd, selectedCurrentRange.startDate, selectedCurrentRange.endDate);
+            return {
+                ...hd,
+                matchedSchedules
+            };
+        });
+
+        // Sắp xếp theo ngày lịch đầu tiên trong kỳ
+        scheduledContracts.sort((a, b) => {
+            const dateA = a.matchedSchedules?.[0]?.date ? new Date(a.matchedSchedules[0].date).getTime() : 0;
+            const dateB = b.matchedSchedules?.[0]?.date ? new Date(b.matchedSchedules[0].date).getTime() : 0;
+            return dateA - dateB;
+        });
+
         const recentExpenses = await ChiTieu.find({
             date: { $gte: selectedCurrentRange.startDate, $lte: selectedCurrentRange.endDate }
         })
@@ -583,6 +720,7 @@ async function getBaoCaoKinhDoanh(req, res) {
                 topSales,
                 topCustomers,
                 recentContracts,
+                scheduledContracts,
                 recentExpenses
             },
             overview,
