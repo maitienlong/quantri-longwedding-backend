@@ -180,17 +180,22 @@ async function loginUser(req, res) {
         }
 
         // 3. Tạo JWT token
+        // - Nếu ghi nhớ đăng nhập trên thiết bị cho phép (remember = true): Token không giới hạn (36500d ~ 100 năm)
+        // - Nếu đăng nhập ở thiết bị hoặc phiên khác (không ghi nhớ): Vẫn giới hạn đúng 1 ngày (1d)
+        const isRemember = req.body?.remember === true || req.body?.remember === "true";
+        const signOptions = isRemember ? { expiresIn: "36500d" } : { expiresIn: "1d" };
+
         const token = jwt.sign(
-            { username: user.username, fullname: user.fullname }, // payload
+            { username: user.username, fullname: user.fullname, isRemember }, // payload
             process.env.JWT_SECRET, // secret key
-            { expiresIn: "1d" } // token hết hạn sau 1 ngày
+            signOptions
         );
 
         createLog({
             action: "Đăng nhập hệ thống",
             user: user.fullname || user.username,
             req,
-            details: { username: user.username, positon: user.positon }
+            details: { username: user.username, positon: user.positon, isRemember }
         });
 
         return success(res, "Đăng nhập thành công!", {
@@ -200,7 +205,8 @@ async function loginUser(req, res) {
             birthday: user.birthday,
             positon: user.positon,
             permission: user.permission,
-            avatar: user.avatar
+            avatar: user.avatar,
+            isRemember: isRemember
         });
 
     } catch (err) {
