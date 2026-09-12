@@ -207,12 +207,161 @@ const DEFAULT_BANNER_SLIDES = [
   }
 ];
 
+
+// Dữ liệu mẫu thiệp cưới online mặc định (E-Invitation Templates)
+const DEFAULT_INVITATION_TEMPLATES = [
+  {
+    id: 'tpl-luxury-gold',
+    code: 'VIP-GOLD-01',
+    name: 'Hoàng Gia & Ánh Kim (Luxury Gold)',
+    category: 'Hoàng Gia',
+    themeId: 'luxury-gold',
+    thumbnail: 'https://images.unsplash.com/photo-1519741497674-611481863552?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
+    coverImage: 'https://images.unsplash.com/photo-1519741497674-611481863552?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80',
+    accessType: 'vip',
+    price: '299.000đ',
+    badge: 'ĐẶC QUYỀN VIP',
+    requiredPackage: 'Gói Chụp Ảnh Cưới / Trọn Gói Studio',
+    description: 'Thiết kế quý phái với viền nhũ vàng kim vương giả, hoa văn Baroque tinh tế và phong cách hoàng gia Châu Âu.',
+    primaryColor: '#D4AF37',
+    secondaryColor: '#1A1A1A',
+    bgType: 'dark-gold',
+    musicUrl: 'https://assets.mixkit.co/music/preview/mixkit-wedding-waltz-1498.mp3',
+    musicTitle: 'Wedding Waltz - Lãng Mạn Hoàng Gia',
+    isActive: true,
+    isPopular: true
+  },
+  {
+    id: 'tpl-romantic-rose',
+    code: 'VIP-ROSE-02',
+    name: 'Nàng Thơ & Hoa Hồng (Romantic Rose)',
+    category: 'Lãng Mạn',
+    themeId: 'romantic-rose',
+    thumbnail: 'https://images.unsplash.com/photo-1583939003579-730e3918a45a?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
+    coverImage: 'https://images.unsplash.com/photo-1583939003579-730e3918a45a?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80',
+    accessType: 'vip',
+    price: '250.000đ',
+    badge: 'ĐẶC QUYỀN VIP',
+    requiredPackage: 'Khách Hàng Studio Long Wedding',
+    description: 'Sắc hồng pastel ngọt ngào, cánh hoa hồng bay nhẹ nhàng tạo cảm giác thơ mộng như câu chuyện cổ tích.',
+    primaryColor: '#E07A5F',
+    secondaryColor: '#FFF1F2',
+    bgType: 'rose-blush',
+    musicUrl: 'https://assets.mixkit.co/music/preview/mixkit-beautiful-dream-493.mp3',
+    musicTitle: 'Beautiful Dream - Nhạc Cưới Dịu Êm',
+    isActive: true,
+    isPopular: true
+  },
+  {
+    id: 'tpl-modern-minimal',
+    code: 'FREE-MINIMAL-01',
+    name: 'Tối Giản & Thanh Lịch (Modern Minimalist)',
+    category: 'Hiện Đại',
+    themeId: 'modern-minimal',
+    thumbnail: 'https://images.unsplash.com/photo-1511285560929-80b456fea0bc?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
+    coverImage: 'https://images.unsplash.com/photo-1511285560929-80b456fea0bc?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80',
+    accessType: 'free',
+    price: '0đ (Miễn Phí)',
+    badge: 'MIỄN PHÍ',
+    requiredPackage: 'Mọi Khách Hàng',
+    description: 'Phong cách tối giản chuẩn tạp chí thời trang quốc tế, chú trọng typography hiện đại và bố cục tinh gọn.',
+    primaryColor: '#2B2D42',
+    secondaryColor: '#F8F9FA',
+    bgType: 'clean-white',
+    musicUrl: 'https://assets.mixkit.co/music/preview/mixkit-serene-view-443.mp3',
+    musicTitle: 'Serene View - Giai Điệu Trong Trẻo',
+    isActive: true,
+    isPopular: false
+  },
+  {
+    id: 'tpl-botanical-garden',
+    code: 'FREE-BOTANIC-02',
+    name: 'Cỏ Hoa & Thảo Mộc (Botanical Garden)',
+    category: 'Rustic',
+    themeId: 'botanical-garden',
+    thumbnail: 'https://images.unsplash.com/photo-1606800052052-a08af7148866?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
+    coverImage: 'https://images.unsplash.com/photo-1606800052052-a08af7148866?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80',
+    accessType: 'free',
+    price: '0đ (Miễn Phí)',
+    badge: 'MIỄN PHÍ',
+    requiredPackage: 'Mọi Khách Hàng',
+    description: 'Họa tiết cành lá bạch đàn watercolor tươi mát, mộc mạc và gần gũi, hoàn hảo cho tiệc cưới ngoài trời.',
+    primaryColor: '#2D6A4F',
+    secondaryColor: '#F4F7F5',
+    bgType: 'sage-green',
+    musicUrl: 'https://assets.mixkit.co/music/preview/mixkit-acoustic-guitar-dream-2342.mp3',
+    musicTitle: 'Acoustic Guitar - Nhẹ Nhàng Mộc Mạc',
+    isActive: true,
+    isPopular: true
+  },
+  {
+    id: 'tpl-royal-red',
+    code: 'VIP-RED-03',
+    name: 'Son Hỷ & Á Đông (Royal Crimson)',
+    category: 'Truyền Thống',
+    themeId: 'royal-red',
+    thumbnail: 'https://images.unsplash.com/photo-1544077960-604201fe74bc?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
+    coverImage: 'https://images.unsplash.com/photo-1544077960-604201fe74bc?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80',
+    accessType: 'vip',
+    price: '280.000đ',
+    badge: 'ĐẶC QUYỀN VIP',
+    requiredPackage: 'Gói Chụp Áo Dài / Trọn Gói VIP',
+    description: 'Sắc đỏ son hỷ sự kết hợp nhũ vàng kim may mắn, hoa văn cổ điển tượng trưng cho tình duyên sắt son viên mãn.',
+    primaryColor: '#C9184A',
+    secondaryColor: '#FFF0F3',
+    bgType: 'crimson-gold',
+    musicUrl: 'https://assets.mixkit.co/music/preview/mixkit-traditional-oriental-flute-and-harp-2900.mp3',
+    musicTitle: 'Oriental Harmony - Lễ Hỷ Sum Vầy',
+    isActive: true,
+    isPopular: false
+  },
+  {
+    id: 'tpl-korean-pastel',
+    code: 'VIP-PASTEL-04',
+    name: 'Hàn Quốc Dịu Êm (Korean Pastel)',
+    category: 'Hàn Quốc',
+    themeId: 'korean-pastel',
+    thumbnail: 'https://images.unsplash.com/photo-1515934751635-c81c6bc9a2d8?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
+    coverImage: 'https://images.unsplash.com/photo-1515934751635-c81c6bc9a2d8?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80',
+    accessType: 'paid',
+    price: '199.000đ',
+    badge: 'TRẢ PHÍ / VIP',
+    requiredPackage: 'Mở Khóa Theo Yêu Cầu',
+    description: 'Tông màu pastel trong trẻo kiểu Hàn Quốc, tạo cảm giác tinh khôi, trẻ trung và thanh thoát.',
+    primaryColor: '#7B2CBF',
+    secondaryColor: '#F8F7FF',
+    bgType: 'pastel-dream',
+    musicUrl: 'https://assets.mixkit.co/music/preview/mixkit-piano-reflections-148.mp3',
+    musicTitle: 'Piano Reflections - Tình Yêu Thuần Khiết',
+    isActive: true,
+    isPopular: false
+  }
+];
+
 exports.getSection = async (req, res) => {
   try {
     const { section } = req.params;
     let websiteData = await WEBSITE.findOne({ section });
     
     let data = websiteData ? websiteData.data : [];
+
+    // Mẫu Thiệp Mời Cưới Online (E-Invitation Templates)
+    if (section === 'invitation-templates') {
+      if (!data || (Array.isArray(data) && data.length === 0)) {
+        data = DEFAULT_INVITATION_TEMPLATES;
+        try {
+          await WEBSITE.findOneAndUpdate(
+            { section: 'invitation-templates' },
+            { section: 'invitation-templates', data: DEFAULT_INVITATION_TEMPLATES },
+            { upsert: true, new: true }
+          );
+        } catch (e) {
+          console.warn("Lỗi lưu mẫu thiệp mặc định vào DB:", e.message);
+        }
+      }
+      return res.status(200).json({ success: true, data });
+    }
+
 
         // Fallback cho Slide Banner trang chủ nếu chưa có trong DB
     if (section === 'banners') {

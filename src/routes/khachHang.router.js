@@ -10,5 +10,6 @@ router.post("/update", authMiddleware, khachHangService.update);
 router.post("/remove", authMiddleware, checkRole(["Quản lý"]), khachHangService.remove);
 router.post("/get-facebook-info", authMiddleware, khachHangService.getFacebookInfo);
 router.post("/login", khachHangService.login);
+router.post("/register", khachHangService.register);
 
 module.exports = router;

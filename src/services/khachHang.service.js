@@ -204,26 +204,36 @@ async function login(req, res) {
         let query = {};
         
         // Kiểm tra xem là link facebook hay sđt/id
-        if (soDienThoai.includes("facebook.com") || soDienThoai.includes("fb.com")) {
-            const formData = new URLSearchParams();
-            formData.append('link', soDienThoai);
+        const cleanInput = soDienThoai.trim();
+        if (cleanInput.includes("facebook.com") || cleanInput.includes("fb.com")) {
+            let fbUid = "";
+            try {
+                const formData = new URLSearchParams();
+                formData.append('link', cleanInput);
 
-            const response = await fetch('https://id.traodoisub.com/api.php', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                },
-                body: formData.toString()
-            });
+                const response = await fetch('https://id.traodoisub.com/api.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: formData.toString()
+                });
 
-            const json = await response.json();
-            if (json && json.success === 200 && json.id) {
-                query.facebookId = json.id;
-            } else {
-                return error(res, "Không thể trích xuất ID từ link Facebook này.", 400);
+                const json = await response.json();
+                if (json && json.success === 200 && json.id) {
+                    fbUid = json.id;
+                }
+            } catch (e) {
+                console.warn("Lỗi tra cứu traodoisub:", e.message);
             }
+
+            query = {
+                $or: [
+                    { facebookId: cleanInput },
+                    { soDienThoai: cleanInput },
+                    ...(fbUid ? [{ facebookId: fbUid }] : [])
+                ]
+            };
         } else {
-            query = { $or: [{ soDienThoai: soDienThoai }, { facebookId: soDienThoai }] };
+            query = { $or: [{ soDienThoai: cleanInput }, { facebookId: cleanInput }] };
         }
 
         const khachHang = await KhachHang.findOne(query);
@@ -247,11 +257,102 @@ async function login(req, res) {
     }
 }
 
+
+async function register(req, res) {
+    const { tenKhachHang, soDienThoai, matKhau, diaChi } = req.body;
+    try {
+        if (!soDienThoai || !matKhau) {
+            return error(res, 'Vui lòng nhập Số điện thoại / Link Facebook và Mật khẩu', 400);
+        }
+
+        const cleanInput = soDienThoai.trim();
+        const isFacebook = cleanInput.includes('facebook.com') || cleanInput.includes('fb.com');
+        let fbUid = '';
+
+        if (isFacebook) {
+            try {
+                const formData = new URLSearchParams();
+                formData.append('link', cleanInput);
+
+                const response = await fetch('https://id.traodoisub.com/api.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: formData.toString()
+                });
+
+                const json = await response.json();
+                if (json && json.success === 200 && json.id) {
+                    fbUid = json.id;
+                }
+            } catch (e) {
+                console.warn('Lỗi tra cứu traodoisub:', e.message);
+            }
+        }
+
+        let checkQuery = {};
+        if (isFacebook) {
+            checkQuery = {
+                $or: [
+                    { facebookId: cleanInput },
+                    { soDienThoai: cleanInput },
+                    ...(fbUid ? [{ facebookId: fbUid }] : [])
+                ]
+            };
+        } else {
+            checkQuery = {
+                $or: [
+                    { soDienThoai: cleanInput },
+                    { facebookId: cleanInput }
+                ]
+            };
+        }
+
+        const existingCustomer = await KhachHang.findOne(checkQuery);
+        if (existingCustomer) {
+            return error(res, 'Số điện thoại / Link Facebook này đã được đăng ký. Vui lòng chuyển sang Đăng Nhập!', 400);
+        }
+
+        const defaultName = (tenKhachHang && tenKhachHang.trim()) 
+            ? tenKhachHang.trim() 
+            : (isFacebook ? 'Khách hàng Facebook' : ('Khách hàng ' + cleanInput.slice(-4)));
+
+        const khachHang = new KhachHang({
+            tenKhachHang: defaultName,
+            soDienThoai: isFacebook ? '' : cleanInput,
+            facebookId: isFacebook ? (fbUid || cleanInput) : '',
+            maDangNhap: matKhau.trim(),
+            diaChi: (diaChi && diaChi.trim()) ? diaChi.trim() : 'Chưa cập nhật địa chỉ',
+            gioiTinh: 'Khác',
+            ngaySinhNhat: '01/01/2000'
+        });
+
+        await khachHang.save();
+
+        createLog({
+            action: 'Khách hàng tự đăng ký (' + khachHang.tenKhachHang + ')',
+            user: 'Khách hàng Web',
+            req,
+            details: { tenKhachHang: khachHang.tenKhachHang, soDienThoai: khachHang.soDienThoai, facebookId: khachHang.facebookId }
+        });
+
+        const token = jwt.sign(
+            { id: khachHang._id, soDienThoai: khachHang.soDienThoai, role: 'KhachHang', fullname: khachHang.tenKhachHang },
+            process.env.JWT_SECRET,
+            { expiresIn: '30d' }
+        );
+
+        return success(res, 'Đăng ký tài khoản thành công!', { token, khachHang });
+    } catch (err) {
+        return error(res, err.message, 500);
+    }
+}
+
 module.exports = {
     create,
     find,
     update,
     remove,
     getFacebookInfo,
-    login
+    login,
+    register
 };
