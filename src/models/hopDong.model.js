@@ -39,7 +39,9 @@ const cartItemSchema = new mongoose.Schema({
   trangPhucChuReNgayAnHoi: { type: String, default: "" },
   trangPhucVayCuoiNgayCuoi: { type: String, default: "" },
   trangPhucVestChuReNgayCuoi: { type: String, default: "" },
-  hoaCamTay: { type: String, default: "" }
+  hoaCamTay: { type: String, default: "" },
+  maLoaiThiep: { type: String, default: "" },
+  tenLoaiThiep: { type: String, default: "" }
 });
 
 const toDate = (v) => {

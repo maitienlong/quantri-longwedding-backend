@@ -18,6 +18,8 @@ router.get("/:id/wishes", thiepCuoiService.getWishes);
 router.post("/:id/wishes", thiepCuoiService.submitWish);
 
 // Protected routes (cho chủ thiệp / khách hàng đã đăng nhập)
+router.get("/customer/check-permission", authMiddleware, thiepCuoiService.checkInvitationPermission);
+router.get("/customer/check-permission/:customerId", thiepCuoiService.checkInvitationPermission);
 router.get("/customer/my/list", authMiddleware, thiepCuoiService.getMyInvitations);
 router.get("/customer/:customerId/list", thiepCuoiService.getMyInvitations);
 router.patch("/:id/toggle-publish", thiepCuoiService.togglePublishStatus);

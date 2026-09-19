@@ -182,8 +182,8 @@ async function loginUser(req, res) {
         // 3. Tạo JWT token
         // - Nếu ghi nhớ đăng nhập trên thiết bị cho phép (remember = true): Token không giới hạn (36500d ~ 100 năm)
         // - Nếu đăng nhập ở thiết bị hoặc phiên khác (không ghi nhớ): Vẫn giới hạn đúng 1 ngày (1d)
-        const isRemember = req.body?.remember === true || req.body?.remember === "true";
-        const signOptions = isRemember ? { expiresIn: "36500d" } : { expiresIn: "1d" };
+        const isRemember = req.body?.remember !== false && req.body?.remember !== "false";
+        const signOptions = isRemember ? { expiresIn: "36500d" } : { expiresIn: "365d" };
 
         const token = jwt.sign(
             { username: user.username, fullname: user.fullname, isRemember }, // payload

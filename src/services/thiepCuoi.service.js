@@ -100,6 +100,13 @@ exports.saveInvitation = async (req, res) => {
             return error(res, "Bắt buộc phải đăng nhập tài khoản khách hàng để lưu thiệp cưới!", 401);
         }
 
+        // Kiểm tra điều kiện đơn hàng có dịch vụ thiệp mời online cùng mã loại thiệp
+        const templateId = data.templateId || data.themeId;
+        const eligibility = await validateCustomerInvitationEligibility(customerId, templateId);
+        if (!eligibility.allowed) {
+            return error(res, eligibility.reason || "Đơn hàng của bạn không đủ điều kiện tạo thiệp cưới này!", 403);
+        }
+
         let updated = await ThiepCuoi.findOneAndUpdate(
             { 
                 khachHangId: customerId,
@@ -471,20 +478,20 @@ exports.getInvitationShareSeo = async (req, res) => {
         const rawGuest = (req.query.guest || req.query.to || req.query.khach || '').trim();
         let guestName = 'Quý Khách';
         if (rawGuest) {
-            // Chuẩn hóa tên khách mời, loại bỏ tiền tố thừa như "Gửi", "Kính gửi"
-            const clean = rawGuest.replace(/^(gửi|kính gửi)\s+/i, '').trim();
+            // Chuẩn hóa tên khách mời, loại bỏ tiền tố thừa như "Kính mời:", "Kính gửi", "Gửi"
+            const clean = rawGuest.replace(/^(kính\s*mời:?|kính\s*gửi:?|gửi:?)\s*/i, '').trim();
             if (clean) guestName = clean;
         }
 
-        // Xác định loại lễ: Lễ Thành Hôn (Nhà Trai) hay Lễ Vu Quy (Nhà Gái)
-        let partText = 'Thành Hôn';
+        // Xác định loại lễ: lễ thành hôn (Nhà Trai) hay lễ vu quy (Nhà Gái)
+        let partText = 'thành hôn';
         const typeParam = (req.query.type || '').toLowerCase();
         const greetingParam = (req.query.greeting || '').toLowerCase();
 
         if (typeParam.includes('vuquy') || typeParam.includes('vu quy') || greetingParam.includes('vu quy')) {
-            partText = 'Vu Quy';
+            partText = 'vu quy';
         } else if (typeParam.includes('thanhhon') || typeParam.includes('thành hôn') || greetingParam.includes('thành hôn')) {
-            partText = 'Thành Hôn';
+            partText = 'thành hôn';
         } else {
             // Kiểm tra trong danh sách khách mời nếu có lưu thông tin nhóm
             if (rawGuest && invitation && invitation.guestList && invitation.guestList.length > 0) {
@@ -494,16 +501,16 @@ exports.getInvitationShareSeo = async (req, res) => {
                 if (matchedGuest) {
                     const grp = (matchedGuest.group || '').toLowerCase();
                     if (grp.includes('cô dâu') || grp.includes('nhà gái')) {
-                        partText = 'Vu Quy';
+                        partText = 'vu quy';
                     } else if (grp.includes('chú rể') || grp.includes('nhà trai')) {
-                        partText = 'Thành Hôn';
+                        partText = 'thành hôn';
                     }
                 }
             }
             // Nếu vẫn chưa xác định, kiểm tra trạng thái bật của vuQuy/thanhHon trong thiệp
-            if (partText === 'Thành Hôn' && invitation) {
+            if (partText === 'thành hôn' && invitation) {
                 if (invitation.vuQuy?.enabled && !invitation.thanhHon?.enabled) {
-                    partText = 'Vu Quy';
+                    partText = 'vu quy';
                 }
             }
         }
@@ -513,11 +520,11 @@ exports.getInvitationShareSeo = async (req, res) => {
         const brideName = invitation?.bride?.name?.trim() || 'Cô Dâu';
         const coupleNames = `${groomName} & ${brideName}`;
 
-        // Tiêu đề chuẩn theo yêu cầu: Gửi <người gửi/khách mời> tham dự lễ <thành hôn/vu quy> của <Tên Cô Dâu Chú Rể>
-        const title = `Gửi ${guestName} tham dự lễ ${partText} của ${coupleNames}`;
+        // Tiêu đề chuẩn theo đúng định dạng: Kính mời: Tên khách mời tham dự lễ thành hôn/ vu quy của Tên Dâu Rể
+        const title = `Kính mời: ${guestName} tham dự lễ ${partText} của ${coupleNames}`;
 
         // Nội dung phụ (OG Description): Lời gửi, ngày giờ và địa điểm tổ chức
-        const eventData = partText === 'Vu Quy'
+        const eventData = partText === 'vu quy'
             ? (invitation?.vuQuy?.enabled ? invitation?.vuQuy : invitation?.tiecCuoi)
             : (invitation?.thanhHon?.enabled ? invitation?.thanhHon : invitation?.tiecCuoi);
 
@@ -665,3 +672,139 @@ exports.getInvitationShareSeo = async (req, res) => {
         return res.status(500).send("Lỗi máy chủ khi tạo trang xem trước");
     }
 };
+
+
+// Hàm helper kiểm tra xem đơn hàng của khách hàng có dịch vụ Thiệp Mời Online và đúng mã loại thiệp không
+const validateCustomerInvitationEligibility = async (customerId, requestedTemplateId = null) => {
+    try {
+        if (!customerId) {
+            return {
+                allowed: false,
+                hasService: false,
+                allowedTemplateIds: [],
+                contractInfo: null,
+                reason: 'Vui lòng đăng nhập tài khoản khách hàng.'
+            };
+        }
+
+        // Tìm tất cả hợp đồng của khách hàng
+        const HopDongModel = require("../models/hopDong.model");
+        const mongoose = require("mongoose");
+        const objId = mongoose.Types.ObjectId.isValid(customerId) ? new mongoose.Types.ObjectId(customerId) : null;
+        const queryOr = [{ khachHang1: customerId }, { khachHang2: customerId }];
+        if (objId) {
+            queryOr.push({ khachHang1: objId }, { khachHang2: objId });
+        }
+        const contracts = await HopDongModel.find({ $or: queryOr }).populate("gioHang.dichVu").lean();
+
+        if (!contracts || contracts.length === 0) {
+            return {
+                allowed: false,
+                hasService: false,
+                allowedTemplateIds: [],
+                contractInfo: null,
+                reason: 'Bạn chưa có hợp đồng nào tại Long Wedding Studio. Vui lòng liên hệ Studio để được đăng ký gói dịch vụ!'
+            };
+        }
+
+        let hasInvitationService = false;
+        let allowedTemplates = [];
+        let matchedContract = null;
+
+        for (const contract of contracts) {
+            if (contract.gioHang && Array.isArray(contract.gioHang)) {
+                for (const item of contract.gioHang) {
+                    const tenDV = (item.tenDichVuSnapshot || item.dichVu?.tenDichVu || '').toLowerCase();
+                    const maDV = (item.maDichVu || item.dichVu?.maDichVu || '').toLowerCase();
+                    const moTa = (item.moTaDichVu || item.dichVu?.moTaDichVu || '').toLowerCase();
+                    const itemMaThiep = (item.maLoaiThiep || '').toLowerCase();
+
+                    // Nhận diện dịch vụ thiệp mời online
+                    const isThiep = tenDV.includes('thiệp') || tenDV.includes('thiep') ||
+                                    maDV.includes('thiep') || itemMaThiep !== '' ||
+                                    moTa.includes('thiệp') || moTa.includes('thiep');
+
+                    if (isThiep) {
+                        hasInvitationService = true;
+                        matchedContract = contract;
+
+                        if (itemMaThiep) {
+                            allowedTemplates.push(itemMaThiep);
+                        }
+
+                        // Tìm mã dạng tpl-... trong mã dịch vụ, tên dịch vụ hoặc mô tả
+                        const tplMatch = (itemMaThiep + ' ' + maDV + ' ' + tenDV + ' ' + moTa).match(/tpl-[a-z0-9-]+/gi);
+                        if (tplMatch) {
+                            tplMatch.forEach(m => {
+                                const cleanM = m.toLowerCase();
+                                if (!allowedTemplates.includes(cleanM)) {
+                                    allowedTemplates.push(cleanM);
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!hasInvitationService) {
+            return {
+                allowed: false,
+                hasService: false,
+                allowedTemplateIds: [],
+                contractInfo: null,
+                reason: 'Trong đơn hàng của bạn chưa đăng ký Dịch vụ Thiệp Mời Online. Vui lòng liên hệ Studio để đăng ký dịch vụ!'
+            };
+        }
+
+        // Nếu hợp đồng có dịch vụ thiệp nhưng chưa gán mã loại thiệp cụ thể -> cho phép tất cả các mẫu mặc định
+        // Nhưng nếu đã có mã loại thiệp cụ thể -> Bắt buộc phải trùng khớp mã loại thiệp!
+        if (requestedTemplateId && allowedTemplates.length > 0) {
+            const reqClean = requestedTemplateId.trim().toLowerCase();
+            const isMatch = allowedTemplates.some(t => t === reqClean || reqClean.includes(t) || t.includes(reqClean));
+            if (!isMatch) {
+                return {
+                    allowed: false,
+                    hasService: true,
+                    allowedTemplateIds: allowedTemplates,
+                    contractInfo: {
+                        maHopDong: matchedContract?.maHopDong
+                    },
+                    reason: `Mẫu thiệp "${requestedTemplateId}" không khớp với mã loại thiệp đã đăng ký trong đơn hàng của bạn (Mã đăng ký: ${allowedTemplates.join(', ')}).`
+                };
+            }
+        }
+
+        return {
+            allowed: true,
+            hasService: true,
+            allowedTemplateIds: allowedTemplates,
+            contractInfo: {
+                maHopDong: matchedContract?.maHopDong
+            },
+            reason: 'Đủ điều kiện tạo và chỉnh sửa thiệp cưới online'
+        };
+    } catch (err) {
+        console.error('Lỗi validateCustomerInvitationEligibility:', err);
+        return {
+            allowed: false,
+            hasService: false,
+            allowedTemplateIds: [],
+            reason: err.message
+        };
+    }
+};
+
+// API Endpoint kiểm tra quyền tạo thiệp cưới của khách hàng
+exports.checkInvitationPermission = async (req, res) => {
+    try {
+        const customerId = req.user?.id || req.query.customerId || req.params.customerId;
+        const templateId = req.query.template || req.query.templateId;
+        const result = await validateCustomerInvitationEligibility(customerId, templateId);
+        return success(res, "Kiểm tra đặc quyền tạo thiệp thành công", result);
+    } catch (err) {
+        return error(res, err.message, 500);
+    }
+};
+
+exports.validateCustomerInvitationEligibility = validateCustomerInvitationEligibility;
