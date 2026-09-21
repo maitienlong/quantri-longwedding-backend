@@ -260,6 +260,162 @@ exports.getWishes = async (req, res) => {
 };
 
 
+
+const KNOWN_TEMPLATES = [
+  { id: 'tpl-song-hy-xanh', code: 'VIP-SONGHY-06', themeId: 'song-hy-xanh', name: 'Song Hỷ Xanh (Song Hỷ Xanh Lá & Ngọc Lục Bảo)', musicUrl: '/audio/MOIDUYENVANG.mp3', musicTitle: 'Mối Duyên Vàng' },
+  { id: 'tpl-dreamy-fairytale', code: 'VIP-DREAMY-05', themeId: 'dreamy-fairytale', name: 'Lâu Đài Cổ Tích & Nơ Lụa Hồng (Dreamy Fairytale)' },
+  { id: 'tpl-luxury-gold', code: 'VIP-GOLD-01', themeId: 'luxury-gold', name: 'Hoàng Gia & Ánh Kim (Luxury Gold)' },
+  { id: 'tpl-romantic-rose', code: 'VIP-ROSE-02', themeId: 'romantic-rose', name: 'Nàng Thơ & Hoa Hồng (Romantic Rose)' },
+  { id: 'tpl-modern-minimal', code: 'FREE-MINIMAL-01', themeId: 'modern-minimal', name: 'Tối Giản & Thanh Lịch (Modern Minimalist)' },
+  { id: 'tpl-botanical-garden', code: 'FREE-BOTANIC-02', themeId: 'botanical-garden', name: 'Cỏ Hoa & Thảo Mộc (Botanical Garden)' },
+  { id: 'tpl-royal-red', code: 'VIP-RED-03', themeId: 'royal-red', name: 'Son Hỷ & Á Đông (Royal Crimson)' },
+  { id: 'tpl-korean-pastel', code: 'VIP-PASTEL-04', themeId: 'korean-pastel', name: 'Hàn Quốc Dịu Êm (Korean Pastel)' }
+];
+
+function resolveTemplateFromCartItem(item) {
+    if (!item) return null;
+    const tenDV = (item.tenDichVuSnapshot || item.dichVu?.tenDichVu || '').toLowerCase();
+    const maDV = (item.maDichVu || item.dichVu?.maDichVu || '').toLowerCase();
+    const moTa = (item.moTaDichVu || item.dichVu?.moTaDichVu || '').toLowerCase();
+    const maLoaiThiep = (item.maLoaiThiep || '').toLowerCase();
+    const isThiep = Number(item.loaiDichVu) === 5 || item.loaiDichVu === '5' ||
+                    tenDV.includes('thiệp') || tenDV.includes('thiep') ||
+                    maDV.includes('thiep') || maLoaiThiep !== '' ||
+                    moTa.includes('thiệp') || moTa.includes('thiep');
+    if (!isThiep) return null;
+
+    for (const tpl of KNOWN_TEMPLATES) {
+        const id = tpl.id.toLowerCase();
+        const code = (tpl.code || '').toLowerCase();
+        const theme = (tpl.themeId || '').toLowerCase();
+        if (maLoaiThiep && (maLoaiThiep === id || maLoaiThiep === code || maLoaiThiep === theme)) return tpl;
+        if (maDV && (maDV === code || maDV === id || maDV === theme)) return tpl;
+    }
+
+    const full = `${maLoaiThiep} ${maDV} ${tenDV} ${moTa}`;
+    for (const tpl of KNOWN_TEMPLATES) {
+        const id = tpl.id.toLowerCase();
+        const code = (tpl.code || '').toLowerCase();
+        const theme = (tpl.themeId || '').toLowerCase();
+        if (full.includes(id) || (code && full.includes(code)) || (theme && full.includes(theme))) return tpl;
+    }
+
+    for (const tpl of KNOWN_TEMPLATES) {
+        const mainName = tpl.name.split('(')[0].trim().toLowerCase();
+        if (mainName && tenDV.includes(mainName)) return tpl;
+    }
+
+    return KNOWN_TEMPLATES[0];
+}
+
+async function autoProvisionCustomerInvitations(customerId) {
+    if (!customerId) return;
+    try {
+        const HopDongModel = require("../models/hopDong.model");
+        const KhachHangModel = require("../models/khachHang.model");
+        const mongoose = require("mongoose");
+        const objId = mongoose.Types.ObjectId.isValid(customerId) ? new mongoose.Types.ObjectId(customerId) : null;
+        const queryOr = [{ khachHang1: customerId }, { khachHang2: customerId }];
+        if (objId) queryOr.push({ khachHang1: objId }, { khachHang2: objId });
+
+        const contracts = await HopDongModel.find({ $or: queryOr })
+            .populate("gioHang.dichVu")
+            .populate("khachHang1")
+            .populate("khachHang2")
+            .lean();
+
+        if (!contracts || contracts.length === 0) return;
+
+        const khachHang = await KhachHangModel.findById(customerId).lean();
+
+        for (const contract of contracts) {
+            if (!contract.gioHang || !Array.isArray(contract.gioHang)) continue;
+
+            for (const item of contract.gioHang) {
+                const tpl = resolveTemplateFromCartItem(item);
+                if (!tpl) continue;
+
+                const existing = await ThiepCuoi.findOne({
+                    khachHangId: customerId,
+                    $or: [
+                        { templateId: tpl.id },
+                        { themeId: tpl.themeId },
+                        { maHopDong: contract.maHopDong }
+                    ]
+                });
+
+                if (!existing) {
+                    const groomName = contract.khachHang1?.tenKhachHang || (khachHang?.gioiTinh === 'Nam' ? khachHang.tenKhachHang : 'Chú Rể');
+                    const groomPhone = contract.khachHang1?.soDienThoai || (khachHang?.gioiTinh === 'Nam' ? khachHang.soDienThoai : '');
+                    const brideName = contract.khachHang2?.tenKhachHang || (khachHang?.gioiTinh === 'Nữ' ? khachHang.tenKhachHang : 'Cô Dâu');
+                    const bridePhone = contract.khachHang2?.soDienThoai || (khachHang?.gioiTinh === 'Nữ' ? khachHang.soDienThoai : '');
+
+                    const ngayCuoiStr = contract.cacNgay?.ngayCuoi 
+                        ? new Date(contract.cacNgay.ngayCuoi).toISOString().split('T')[0] 
+                        : '';
+                    const ngayAnHoiStr = contract.cacNgay?.ngayAnHoi 
+                        ? new Date(contract.cacNgay.ngayAnHoi).toISOString().split('T')[0] 
+                        : '';
+
+                    const newInvitation = new ThiepCuoi({
+                        invitationId: `thiep-${(contract.maHopDong || 'hd').toLowerCase().replace(/[^a-z0-9]/g, '-')}-${tpl.themeId || tpl.id}`,
+                        khachHangId: customerId,
+                        maHopDong: contract.maHopDong || '',
+                        templateId: tpl.id,
+                        themeId: tpl.themeId,
+                        title: `Thiệp Cưới ${tpl.name.split('(')[0].trim()}: ${groomName} & ${brideName}`,
+                        groom: {
+                            name: groomName,
+                            phone: groomPhone,
+                            avatar: contract.khachHang1?.avatar || khachHang?.avatar || '',
+                            bank: 'MB Bank',
+                            order: 'Trưởng Nam'
+                        },
+                        bride: {
+                            name: brideName,
+                            phone: bridePhone,
+                            avatar: contract.khachHang2?.avatar || '',
+                            bank: 'Vietcombank',
+                            order: 'Ái Nữ'
+                        },
+                        vuQuy: {
+                            enabled: true,
+                            title: 'LỄ VU QUY',
+                            time: '08:30',
+                            dateSolar: ngayAnHoiStr,
+                            locationName: 'Tư Gia Nhà Gái',
+                            address: contract.cacNgay?.diaDiemChup || ''
+                        },
+                        thanhHon: {
+                            enabled: true,
+                            title: 'LỄ THÀNH HÔN',
+                            time: '11:00',
+                            dateSolar: ngayCuoiStr,
+                            locationName: 'Tư Gia Nhà Trai',
+                            address: contract.cacNgay?.diaDiemChup || ''
+                        },
+                        tiecCuoi: {
+                            enabled: true,
+                            title: 'TIỆC MỪNG TRỌNG ĐẠI',
+                            time: '18:00',
+                            dateSolar: ngayCuoiStr,
+                            locationName: contract.cacNgay?.diaDiemChup || 'Gala Center',
+                            address: 'Long Wedding Studio'
+                        },
+                        musicUrl: tpl.musicUrl || '/audio/MOIDUYENVANG.mp3',
+                        musicTitle: tpl.musicTitle || 'Mối Duyên Vàng',
+                        isPublished: false
+                    });
+
+                    await newInvitation.save();
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Lỗi autoProvisionCustomerInvitations:", e);
+    }
+}
+
 // 2a. Lấy danh sách tất cả thiệp cưới thật của khách hàng (Đang phát hành & Đang làm dở)
 exports.getMyInvitations = async (req, res) => {
     try {
@@ -267,6 +423,9 @@ exports.getMyInvitations = async (req, res) => {
         if (!customerId) {
             return error(res, "Vui lòng đăng nhập tài khoản khách hàng", 401);
         }
+
+        // Tự động kiểm tra hợp đồng và tạo sẵn mẫu thiệp nếu khách có đăng ký
+        await autoProvisionCustomerInvitations(customerId);
 
         const invitations = await ThiepCuoi.find({ khachHangId: customerId }).sort({ updatedAt: -1 });
 
@@ -728,11 +887,17 @@ const validateCustomerInvitationEligibility = async (customerId, requestedTempla
                         hasInvitationService = true;
                         matchedContract = contract;
 
-                        if (itemMaThiep) {
+                        const resolvedTpl = resolveTemplateFromCartItem(item);
+                        if (resolvedTpl) {
+                            if (!allowedTemplates.includes(resolvedTpl.id)) allowedTemplates.push(resolvedTpl.id);
+                            if (resolvedTpl.code && !allowedTemplates.includes(resolvedTpl.code.toLowerCase())) allowedTemplates.push(resolvedTpl.code.toLowerCase());
+                            if (resolvedTpl.themeId && !allowedTemplates.includes(resolvedTpl.themeId)) allowedTemplates.push(resolvedTpl.themeId);
+                        }
+
+                        if (itemMaThiep && !allowedTemplates.includes(itemMaThiep)) {
                             allowedTemplates.push(itemMaThiep);
                         }
 
-                        // Tìm mã dạng tpl-... trong mã dịch vụ, tên dịch vụ hoặc mô tả
                         const tplMatch = (itemMaThiep + ' ' + maDV + ' ' + tenDV + ' ' + moTa).match(/tpl-[a-z0-9-]+/gi);
                         if (tplMatch) {
                             tplMatch.forEach(m => {

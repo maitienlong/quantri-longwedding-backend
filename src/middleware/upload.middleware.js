@@ -22,10 +22,13 @@ const storage = multer.diskStorage({
 
 // File filter (accept images only)
 const fileFilter = (req, file, cb) => {
-  if (file.mimetype === 'image/jpeg' || file.mimetype === 'image/png' || file.mimetype === 'image/webp') {
+  const isImage = file.mimetype.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(file.originalname);
+  const isAudio = file.mimetype.startsWith('audio/') || /\.(mp3|wav|m4a|ogg|aac|flac)$/i.test(file.originalname);
+
+  if (isImage || isAudio) {
     cb(null, true);
   } else {
-    cb(new Error('Chỉ cho phép định dạng ảnh hợp lệ (JPG, PNG, WEBP)!'), false);
+    cb(new Error('Chỉ cho phép định dạng ảnh (JPG, PNG, WEBP) hoặc âm thanh (MP3, WAV, M4A, OGG)!'), false);
   }
 };
 

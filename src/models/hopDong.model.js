@@ -18,7 +18,7 @@ const cartItemSchema = new mongoose.Schema({
   dichVu: {
     type: mongoose.Schema.Types.ObjectId,
     ref: DICHVU, // Tham chiếu đến model DichVu
-    required: true
+    required: false
   },
   tenDichVuSnapshot: String, // Lưu tên để hiển thị nhanh không cần populate
   loaiDichVu: { type: Number },
@@ -151,54 +151,58 @@ hopDongSchema.pre('save', async function (next) {
       for (let item of this.gioHang) {
         // Lấy đơn giá và các thông tin snapshot từ DB nếu chưa có
         if (!item.donGia || !item.loaiDichVu || !item.tenDichVuSnapshot) {
-          const dichVuGoc = await DICHVU.findById(item.dichVu);
-          if (!dichVuGoc) {
-            throw new Error(`Không tìm thấy dịch vụ với ID: ${item.dichVu}`);
+          let dichVuGoc = null;
+          if (item.dichVu) {
+            try {
+              dichVuGoc = await DICHVU.findById(item.dichVu);
+            } catch (e) {}
           }
-          if (!item.donGia) {
-            item.donGia = dichVuGoc.giaTriDichVu;
-          }
-          if (!item.tenDichVuSnapshot) {
-            item.tenDichVuSnapshot = dichVuGoc.tenDichVu;
-          }
-          if (!item.loaiDichVu) {
-            item.loaiDichVu = dichVuGoc.loaiDichVu;
-          }
-          if (item.soLuongAnhChinhSua === undefined || item.soLuongAnhChinhSua === null) {
-            item.soLuongAnhChinhSua = dichVuGoc.soLuongAnhChinhSua || 0;
-          }
-          if (item.soLuongAnh16x21 === undefined || item.soLuongAnh16x21 === null) {
-            item.soLuongAnh16x21 = dichVuGoc.soLuongAnh16x21 || 0;
-          }
-          if (item.soLuongAnh20x30 === undefined || item.soLuongAnh20x30 === null) {
-            item.soLuongAnh20x30 = dichVuGoc.soLuongAnh20x30 || 0;
-          }
-          if (item.soLuongAnh60x90 === undefined || item.soLuongAnh60x90 === null) {
-            item.soLuongAnh60x90 = dichVuGoc.soLuongAnh60x90 || 0;
-          }
-          if (!item.trangDiemNgayAnHoi) {
-            item.trangDiemNgayAnHoi = dichVuGoc.trangDiemNgayAnHoi || "";
-          }
-          if (!item.trangDiemNgayCuoi) {
-            item.trangDiemNgayCuoi = dichVuGoc.trangDiemNgayCuoi || "";
-          }
-          if (!item.trangPhucChoDoiBeLe) {
-            item.trangPhucChoDoiBeLe = dichVuGoc.trangPhucChoDoiBeLe || "";
-          }
-          if (!item.trangPhucCoDauNgayAnHoi) {
-            item.trangPhucCoDauNgayAnHoi = dichVuGoc.trangPhucCoDauNgayAnHoi || "";
-          }
-          if (!item.trangPhucChuReNgayAnHoi) {
-            item.trangPhucChuReNgayAnHoi = dichVuGoc.trangPhucChuReNgayAnHoi || "";
-          }
-          if (!item.trangPhucVayCuoiNgayCuoi) {
-            item.trangPhucVayCuoiNgayCuoi = dichVuGoc.trangPhucVayCuoiNgayCuoi || "";
-          }
-          if (!item.trangPhucVestChuReNgayCuoi) {
-            item.trangPhucVestChuReNgayCuoi = dichVuGoc.trangPhucVestChuReNgayCuoi || "";
-          }
-          if (!item.hoaCamTay) {
-            item.hoaCamTay = dichVuGoc.hoaCamTay || "";
+          if (dichVuGoc) {
+            if (!item.donGia) {
+              item.donGia = dichVuGoc.giaTriDichVu;
+            }
+            if (!item.tenDichVuSnapshot) {
+              item.tenDichVuSnapshot = dichVuGoc.tenDichVu;
+            }
+            if (!item.loaiDichVu) {
+              item.loaiDichVu = dichVuGoc.loaiDichVu;
+            }
+            if (item.soLuongAnhChinhSua === undefined || item.soLuongAnhChinhSua === null) {
+              item.soLuongAnhChinhSua = dichVuGoc.soLuongAnhChinhSua || 0;
+            }
+            if (item.soLuongAnh16x21 === undefined || item.soLuongAnh16x21 === null) {
+              item.soLuongAnh16x21 = dichVuGoc.soLuongAnh16x21 || 0;
+            }
+            if (item.soLuongAnh20x30 === undefined || item.soLuongAnh20x30 === null) {
+              item.soLuongAnh20x30 = dichVuGoc.soLuongAnh20x30 || 0;
+            }
+            if (item.soLuongAnh60x90 === undefined || item.soLuongAnh60x90 === null) {
+              item.soLuongAnh60x90 = dichVuGoc.soLuongAnh60x90 || 0;
+            }
+            if (!item.trangDiemNgayAnHoi) {
+              item.trangDiemNgayAnHoi = dichVuGoc.trangDiemNgayAnHoi || "";
+            }
+            if (!item.trangDiemNgayCuoi) {
+              item.trangDiemNgayCuoi = dichVuGoc.trangDiemNgayCuoi || "";
+            }
+            if (!item.trangPhucChoDoiBeLe) {
+              item.trangPhucChoDoiBeLe = dichVuGoc.trangPhucChoDoiBeLe || "";
+            }
+            if (!item.trangPhucCoDauNgayAnHoi) {
+              item.trangPhucCoDauNgayAnHoi = dichVuGoc.trangPhucCoDauNgayAnHoi || "";
+            }
+            if (!item.trangPhucChuReNgayAnHoi) {
+              item.trangPhucChuReNgayAnHoi = dichVuGoc.trangPhucChuReNgayAnHoi || "";
+            }
+            if (!item.trangPhucVayCuoiNgayCuoi) {
+              item.trangPhucVayCuoiNgayCuoi = dichVuGoc.trangPhucVayCuoiNgayCuoi || "";
+            }
+            if (!item.trangPhucVestChuReNgayCuoi) {
+              item.trangPhucVestChuReNgayCuoi = dichVuGoc.trangPhucVestChuReNgayCuoi || "";
+            }
+            if (!item.hoaCamTay) {
+              item.hoaCamTay = dichVuGoc.hoaCamTay || "";
+            }
           }
         }
 

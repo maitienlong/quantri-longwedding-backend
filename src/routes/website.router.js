@@ -7,6 +7,7 @@ const upload = require("../middleware/upload.middleware");
 
 // Route upload ảnh (đặt trước /:section để tránh trùng khớp tham số)
 router.post("/upload", authMiddleware, upload.single("image"), websiteService.uploadImage);
+router.post("/upload-audio", authMiddleware, upload.single("audio"), websiteService.uploadAudio);
 
 // Route công khai để săn Voucher
 router.post("/vouchers/claim", websiteService.claimVoucher);

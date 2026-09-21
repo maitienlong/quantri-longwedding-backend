@@ -211,8 +211,58 @@ const DEFAULT_BANNER_SLIDES = [
 // Dữ liệu mẫu thiệp cưới online mặc định (E-Invitation Templates)
 const DEFAULT_INVITATION_TEMPLATES = [
   {
+    id: 'tpl-song-hy-xanh',
+    code: 'VIP-SONGHY-06',
+    serviceCode: 'VIP-SONGHY-06',
+    name: 'Song Hỷ Xanh (Song Hỷ Xanh Lá & Ngọc Lục Bảo)',
+    category: 'Truyền Thống',
+    themeId: 'song-hy-xanh',
+    thumbnail: '/images/song-hy/thumbnail.webp',
+    coverImage: '/images/song-hy/hero-arch.jpg',
+    accessType: 'vip',
+    price: '299.000đ',
+    badge: 'ĐẶC QUYỀN VIP',
+    requiredPackage: 'Gói Chụp Ảnh Cưới / Trọn Gói Studio',
+    description: 'Mẫu thiệp cưới Song Hỷ Xanh với chữ Hỷ trang trọng trên nền xanh lá đậm hoàng gia, khung ảnh vòm cung nghệ thuật LOVE NEVER FAILS, lịch trình và hộp quà mừng may mắn.',
+    primaryColor: '#1F3A25',
+    secondaryColor: '#fff7eb',
+    accentColor: '#e8f0e4',
+    bgType: 'emerald-cream',
+    envelopeStyle: 'song-hy-seal',
+    effectType: 'song-hy-float',
+    musicUrl: '/audio/MOIDUYENVANG.mp3',
+    musicTitle: 'Mối Duyên Vàng',
+    isActive: true,
+    isPopular: true
+  },
+  {
+    id: 'tpl-dreamy-fairytale',
+    code: 'VIP-DREAMY-05',
+    serviceCode: 'VIP-DREAMY-05',
+    name: 'Lâu Đài Cổ Tích & Nơ Lụa Hồng (Dreamy Fairytale)',
+    category: 'Lãng Mạn',
+    themeId: 'dreamy-fairytale',
+    thumbnail: '/images/dreamy/thumbnail.jpg',
+    coverImage: '/images/dreamy/palace.jpg',
+    accessType: 'vip',
+    price: '320.000đ',
+    badge: 'ĐẶC QUYỀN VIP',
+    requiredPackage: 'Gói Chụp Ảnh Cưới / Trọn Gói Studio',
+    description: 'Phong cách cổ tích Châu Âu: Bì thư nơ lụa satin hồng phấn mở ra lâu đài tráng lệ ven hồ, timeline tranh màu nước nghệ thuật.',
+    primaryColor: '#B76E79',
+    secondaryColor: '#FFF5F7',
+    bgType: 'fairytale-blush',
+    envelopeStyle: 'ribbon-bow',
+    effectType: 'fairytale-petals',
+    musicUrl: 'https://assets.mixkit.co/music/preview/mixkit-wedding-waltz-1498.mp3',
+    musicTitle: 'Dreamiest Waltz - Giai Điệu Cổ Tích Lãng Mạn',
+    isActive: true,
+    isPopular: true
+  },
+  {
     id: 'tpl-luxury-gold',
     code: 'VIP-GOLD-01',
+    serviceCode: 'VIP-GOLD-01',
     name: 'Hoàng Gia & Ánh Kim (Luxury Gold)',
     category: 'Hoàng Gia',
     themeId: 'luxury-gold',
@@ -234,6 +284,7 @@ const DEFAULT_INVITATION_TEMPLATES = [
   {
     id: 'tpl-romantic-rose',
     code: 'VIP-ROSE-02',
+    serviceCode: 'VIP-ROSE-02',
     name: 'Nàng Thơ & Hoa Hồng (Romantic Rose)',
     category: 'Lãng Mạn',
     themeId: 'romantic-rose',
@@ -255,6 +306,7 @@ const DEFAULT_INVITATION_TEMPLATES = [
   {
     id: 'tpl-modern-minimal',
     code: 'FREE-MINIMAL-01',
+    serviceCode: 'FREE-MINIMAL-01',
     name: 'Tối Giản & Thanh Lịch (Modern Minimalist)',
     category: 'Hiện Đại',
     themeId: 'modern-minimal',
@@ -276,6 +328,7 @@ const DEFAULT_INVITATION_TEMPLATES = [
   {
     id: 'tpl-botanical-garden',
     code: 'FREE-BOTANIC-02',
+    serviceCode: 'FREE-BOTANIC-02',
     name: 'Cỏ Hoa & Thảo Mộc (Botanical Garden)',
     category: 'Rustic',
     themeId: 'botanical-garden',
@@ -297,6 +350,7 @@ const DEFAULT_INVITATION_TEMPLATES = [
   {
     id: 'tpl-royal-red',
     code: 'VIP-RED-03',
+    serviceCode: 'VIP-RED-03',
     name: 'Son Hỷ & Á Đông (Royal Crimson)',
     category: 'Truyền Thống',
     themeId: 'royal-red',
@@ -318,6 +372,7 @@ const DEFAULT_INVITATION_TEMPLATES = [
   {
     id: 'tpl-korean-pastel',
     code: 'VIP-PASTEL-04',
+    serviceCode: 'VIP-PASTEL-04',
     name: 'Hàn Quốc Dịu Êm (Korean Pastel)',
     category: 'Hàn Quốc',
     themeId: 'korean-pastel',
@@ -347,17 +402,25 @@ exports.getSection = async (req, res) => {
 
     // Mẫu Thiệp Mời Cưới Online (E-Invitation Templates)
     if (section === 'invitation-templates') {
-      if (!data || (Array.isArray(data) && data.length === 0)) {
+      if (!data || !Array.isArray(data) || data.length === 0) {
         data = DEFAULT_INVITATION_TEMPLATES;
-        try {
-          await WEBSITE.findOneAndUpdate(
-            { section: 'invitation-templates' },
-            { section: 'invitation-templates', data: DEFAULT_INVITATION_TEMPLATES },
-            { upsert: true, new: true }
-          );
-        } catch (e) {
-          console.warn("Lỗi lưu mẫu thiệp mặc định vào DB:", e.message);
+      } else {
+        // Tự động bổ sung các mẫu mặc định còn thiếu (giữ nguyên cấu hình isActive của mẫu đã lưu)
+        const missing = DEFAULT_INVITATION_TEMPLATES.filter(
+          def => !data.some(item => item.id === def.id || item.themeId === def.themeId)
+        );
+        if (missing.length > 0) {
+          data = [...data, ...missing];
         }
+      }
+      try {
+        await WEBSITE.findOneAndUpdate(
+          { section: 'invitation-templates' },
+          { section: 'invitation-templates', data },
+          { upsert: true, new: true }
+        );
+      } catch (e) {
+        console.warn("Lỗi lưu mẫu thiệp mặc định vào DB:", e.message);
       }
       return res.status(200).json({ success: true, data });
     }
@@ -599,6 +662,17 @@ exports.updateSection = async (req, res) => {
     } else {
       websiteData.data = data;
       await websiteData.save();
+    }
+
+    if (section === 'invitation-templates') {
+      try {
+        const dichVuService = require("./dichVu.service");
+        if (dichVuService && dichVuService.syncInvitationTemplates) {
+          dichVuService.syncInvitationTemplates(data);
+        }
+      } catch (syncErr) {
+        console.warn("Lỗi đồng bộ dịch vụ thiệp cưới:", syncErr.message);
+      }
     }
 
     res.status(200).json({ success: true, message: "Cập nhật thành công", data: websiteData.data });
@@ -1696,5 +1770,27 @@ exports.validateVoucherPublic = async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.uploadAudio = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "Vui lòng chọn file âm thanh!" });
+    }
+
+    const relativePath = `/uploads/${req.file.filename}`;
+    const host = req.protocol + '://' + req.get('host');
+    const absoluteUrl = `${host}${relativePath}`;
+
+    res.status(200).json({
+      success: true,
+      message: "Tải nhạc lên thành công",
+      url: absoluteUrl,
+      path: relativePath,
+      filename: req.file.originalname
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };
