@@ -30,10 +30,10 @@ app.use('/auth/', limiter);
 
 // Body parser limits (nới rộng lên 50MB cho phép gửi payload ảnh dung lượng lớn)
 app.use(express.json({
-  limit: "50mb",
+  limit: "100mb",
   verify: (req, res, buf) => { req.rawBody = buf; }
 }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use(express.urlencoded({ limit: "100mb", extended: true }));
 
 // CORS configuration
 app.use(cors());

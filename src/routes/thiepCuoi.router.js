@@ -2,10 +2,13 @@ const express = require("express");
 const router = express.Router();
 const thiepCuoiService = require("../services/thiepCuoi.service");
 const authMiddleware = require("../middleware/auth.middleware");
+const upload = require("../middleware/upload.middleware");
 
 // Public routes (cho khách mời xem thiệp, gửi RSVP, gửi lời chúc)
 router.get("/studio-contacts", thiepCuoiService.getStudioContacts);
 router.post("/get-facebook-avatar", thiepCuoiService.getFacebookAvatar);
+// API Upload ảnh thiệp cưới (Avatar, Ảnh Bìa, Gallery)
+router.post("/upload-image", upload.single("image"), thiepCuoiService.uploadInvitationImage);
 // Public routes xem trước Open Graph (SEO Crawler Zalo / Facebook Messenger)
 router.get("/p/:id", thiepCuoiService.getInvitationShareSeo);
 router.get("/share/:id", thiepCuoiService.getInvitationShareSeo);

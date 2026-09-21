@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const ThiepCuoi = require("../models/thiepCuoi.model");
 const KhachHang = require("../models/khachHang.model");
 const HopDong = require("../models/hopDong.model");
@@ -973,3 +975,67 @@ exports.checkInvitationPermission = async (req, res) => {
 };
 
 exports.validateCustomerInvitationEligibility = validateCustomerInvitationEligibility;
+
+// API Upload ảnh thiệp cưới trực tiếp từ trình duyệt (cho Dâu Rể & Khách mời)
+exports.uploadInvitationImage = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ 
+                status: "error", 
+                success: false, 
+                message: "Vui lòng chọn tệp ảnh hợp lệ để tải lên!" 
+            });
+        }
+
+        let finalFilename = req.file.filename;
+        const uploadDir = path.join(__dirname, '../uploads');
+        const originalFilePath = path.join(uploadDir, req.file.filename);
+
+        // Tự động tối ưu hóa ảnh bằng Sharp nếu ảnh kích thước lớn
+        try {
+            const sharp = require('sharp');
+            const ext = path.extname(req.file.originalname).toLowerCase();
+            
+            // Nếu là ảnh (không phải audio/gif animated)
+            if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext) || req.file.mimetype.startsWith('image/')) {
+                const optimizedFilename = 'opt-' + Date.now() + '-' + Math.round(Math.random() * 1E6) + '.webp';
+                const optimizedFilePath = path.join(uploadDir, optimizedFilename);
+
+                await sharp(originalFilePath)
+                    .rotate() // Tự động xoay đúng góc chụp theo EXIF
+                    .resize({ width: 2560, height: 2560, fit: 'inside', withoutEnlargement: true })
+                    .webp({ quality: 90, effort: 4 })
+                    .toFile(optimizedFilePath);
+
+                // Nếu nén thành công, dùng file tối ưu và xóa file gốc tạm nếu khác tên
+                finalFilename = optimizedFilename;
+                try {
+                    if (fs.existsSync(originalFilePath) && originalFilePath !== optimizedFilePath) {
+                        fs.unlinkSync(originalFilePath);
+                    }
+                } catch (e) {}
+            }
+        } catch (optErr) {
+            console.warn("Sharp optimization skipped/failed, keeping original upload:", optErr.message);
+        }
+
+        const relativePath = `/uploads/${finalFilename}`;
+        const host = (req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : req.protocol) + '://' + req.get('host');
+        const absoluteUrl = `${host}${relativePath}`;
+
+        return res.status(200).json({
+            status: "success",
+            success: true,
+            message: "Tải và lưu ảnh lên máy chủ thành công",
+            data: {
+                url: absoluteUrl,
+                relativePath: relativePath,
+                filename: finalFilename,
+                originalname: req.file.originalname
+            }
+        });
+    } catch (error) {
+        console.error("Lỗi khi tải ảnh thiệp cưới lên backend:", error);
+        return res.status(500).json({ status: "error", success: false, message: error.message });
+    }
+};
