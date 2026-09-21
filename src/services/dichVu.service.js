@@ -183,9 +183,83 @@ async function find(req, res) {
 }
 
 
+
+async function syncInvitationTemplates(templates) {
+    try {
+        if (!Array.isArray(templates) || templates.length === 0) {
+            return { count: 0, synced: [] };
+        }
+
+        const synced = [];
+        for (const item of templates) {
+            const cleanCode = (item.code || item.serviceCode || item.id || '').trim();
+            if (!cleanCode) continue;
+
+            // Loại bỏ mọi ký tự không phải số để lấy giá trị số chuẩn
+            const rawPriceStr = (item.price || '').toString().replace(/[^0-9]/g, '');
+            const priceNum = Number(rawPriceStr) || 0;
+
+            const dichVuData = {
+                maDichVu: cleanCode,
+                tenDichVu: item.name || cleanCode,
+                loaiDichVu: 5,
+                tonKhoDichVu: 9999,
+                giaTriDichVu: priceNum,
+                giaChoThueDichVu: priceNum,
+                moTaDichVu: item.description || ("Mẫu thiệp cưới trực tuyến: " + item.name),
+                imageDichVu: item.thumbnail || item.coverImage || "",
+                templateId: item.id || item.themeId || "",
+                accessType: item.accessType || "vip",
+                badge: item.badge || "",
+                category: item.category || ""
+            };
+
+            const updated = await DichVu.findOneAndUpdate(
+                { maDichVu: cleanCode },
+                { $set: dichVuData },
+                { upsert: true, new: true, setDefaultsOnInsert: true }
+            );
+            synced.push(updated);
+        }
+        console.log("[DichVu] Đã đồng bộ " + synced.length + " mẫu thiệp cưới vào danh sách dịch vụ!");
+        return { count: synced.length, synced };
+    } catch (err) {
+        console.error("Lỗi syncInvitationTemplates:", err.message);
+        return { count: 0, error: err.message };
+    }
+}
+
+async function syncInvitationTemplatesRoute(req, res) {
+    try {
+        let templates = req.body?.templates;
+        if (!Array.isArray(templates) || templates.length === 0) {
+            const WEBSITE = require("../models/website.model");
+            const sec = await WEBSITE.findOne({ section: 'invitation-templates' });
+            if (sec && Array.isArray(sec.data)) {
+                templates = sec.data;
+            }
+        }
+
+        const result = await syncInvitationTemplates(templates);
+
+        createLog({
+            action: "Đồng bộ " + (result.count || 0) + " mẫu thiệp cưới vào bảng Dịch Vụ",
+            user: req.user?.fullname || "Quản lý",
+            req,
+            details: { count: result.count }
+        });
+
+        return success(res, "Đã đồng bộ thành công " + (result.count || 0) + " mẫu thiệp vào cơ sở dữ liệu dịch vụ!", result);
+    } catch (err) {
+        return error(res, err.message);
+    }
+}
+
 module.exports = {
     create,
     update,
     remove,
-    find
+    find,
+    syncInvitationTemplates,
+    syncInvitationTemplatesRoute
 };
