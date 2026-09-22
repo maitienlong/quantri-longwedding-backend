@@ -15,78 +15,6 @@ const verifyAlbumOwnership = async (album, user) => {
 };
 
 // Middleware xử lý
-
-const fetchDriveFolderFiles = async (folderId) => {
-  const url = `https://drive.google.com/drive/folders/${folderId}`;
-  const response = await axios.get(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept-Language': 'vi,en-US;q=0.9,en;q=0.8'
-    },
-    timeout: 30000,
-    validateStatus: (status) => status < 500
-  });
-
-  if (response.status === 404 || response.status === 403) {
-    throw new Error('Thư mục Google Drive không tồn tại hoặc chưa được cấp quyền công khai (Bất kỳ ai có đường liên kết).');
-  }
-
-  const html = response.data;
-  const unescaped = typeof html === 'string'
-    ? html.replace(/\\x([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-    : '';
-
-  const extRegex = '(?:jpg|jpeg|png|heic|heif|webp|gif|cr2|nef|arw|dng|tif|tiff|mp4|mov|JPG|JPEG|PNG|HEIC|HEIF|WEBP|GIF|CR2|NEF|ARW|DNG|TIF|TIFF|MP4|MOV)';
-
-  // Method 1: JS Array pattern ["<id>",["<folderId>"],"<name>"
-  const r1 = new RegExp(`\\["([a-zA-Z0-9_-]{25,})",\\["(?:[a-zA-Z0-9_-]+)"\\],"([^"]+\\.${extRegex})"`, 'g');
-
-  const filesMap = new Map();
-  let m;
-  while ((m = r1.exec(unescaped)) !== null) {
-    if (!filesMap.has(m[1])) {
-      filesMap.set(m[1], {
-        id: m[1],
-        name: m[2],
-        urlGoc: `https://drive.google.com/uc?id=${m[1]}`,
-        urlNen: `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1000`
-      });
-    }
-  }
-
-  // Method 2: DOM elements with data-id and data-tooltip
-  if (filesMap.size === 0) {
-    const rDom = new RegExp(`data-id="([a-zA-Z0-9_-]{25,})"[^>]*?data-tooltip="([^"]+?\\.${extRegex})\\s*(?:Image)?"`, 'g');
-    while ((m = rDom.exec(unescaped)) !== null) {
-      if (!filesMap.has(m[1])) {
-        filesMap.set(m[1], {
-          id: m[1],
-          name: m[2],
-          urlGoc: `https://drive.google.com/uc?id=${m[1]}`,
-          urlNen: `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1000`
-        });
-      }
-    }
-  }
-
-  // Method 3: General array match
-  if (filesMap.size === 0) {
-    const r3 = new RegExp(`\\["([a-zA-Z0-9_-]{28,35})",(?::\\[.*?\\]|null|"[^"]*"),"([^"]+\\.${extRegex})"`, 'g');
-    while ((m = r3.exec(unescaped)) !== null) {
-      if (!filesMap.has(m[1])) {
-        filesMap.set(m[1], {
-          id: m[1],
-          name: m[2],
-          urlGoc: `https://drive.google.com/uc?id=${m[1]}`,
-          urlNen: `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1000`
-        });
-      }
-    }
-  }
-
-  return Array.from(filesMap.values());
-};
-
 const syncDriveToAlbum = async (req, res) => {
   try {
     const { maHopDong, driveLink, loaiAnh = 'goc' } = req.body;
@@ -113,7 +41,9 @@ const syncDriveToAlbum = async (req, res) => {
           folderIdOrLink = driveLink;
       }
 
-      // APPS_SCRIPT_URL là tùy chọn, không bắt buộc do có direct fetch
+      if (!process.env.APPS_SCRIPT_URL) {
+        return res.status(500).json({ status: 'error', message: 'Chưa cấu hình APPS_SCRIPT_URL trong .env' });
+      }
     }
 
     // Tạo publicLink ngẫu nhiên
@@ -198,41 +128,25 @@ const processImagesInBackground = async (albumId, folderIdOrLink, loaiAnh) => {
         urlNen: `${url}=w1000`
       }));
     } else {
-      // 1. Quét trực tiếp Google Drive folder công khai (nhanh, ổn định, không phụ thuộc Apps Script)
-      let fetchError = null;
-      try {
-        files = await fetchDriveFolderFiles(folderIdOrLink);
-      } catch (err) {
-        fetchError = err.message;
-        console.warn("Direct Drive fetch failed:", err.message);
-      }
-
-      // 2. Dự phòng: Nếu direct fetch chưa ra ảnh và có cấu hình APPS_SCRIPT_URL hợp lệ
-      if (files.length === 0 && process.env.APPS_SCRIPT_URL) {
-        try {
-          const scriptUrl = process.env.APPS_SCRIPT_URL;
-          const response = await axios.get(`${scriptUrl}?folderId=${folderIdOrLink}`, { timeout: 15000 });
-          if (response.data && response.data.status === 'success') {
-            const driveFiles = response.data.data || [];
-            files = driveFiles.map(file => ({
-              id: file.id,
-              name: file.name,
-              urlGoc: `https://drive.google.com/uc?id=${file.id}`,
-              urlNen: `https://drive.google.com/thumbnail?id=${file.id}&sz=w1000`
-            }));
-          }
-        } catch (scriptErr) {
-          console.warn("Apps Script fallback error:", scriptErr.message);
-        }
-      }
-
-      if (files.length === 0) {
-        console.error("Không lấy được ảnh nào từ Google Drive:", folderIdOrLink, fetchError);
+      // Call Google Apps Script to get list of files
+      const scriptUrl = process.env.APPS_SCRIPT_URL;
+      const response = await axios.get(`${scriptUrl}?folderId=${folderIdOrLink}`);
+      
+      if (response.data.status !== 'success') {
+        console.error("Apps Script Error:", response.data.message);
         if (loaiAnh === 'goc') album.trangThai = 'Lỗi đồng bộ';
         else album.trangThaiChinhSua = 'Lỗi đồng bộ';
         await album.save();
         return;
       }
+
+      const driveFiles = response.data.data || [];
+      files = driveFiles.map(file => ({
+        id: file.id,
+        name: file.name,
+        urlGoc: `https://drive.google.com/uc?id=${file.id}`,
+        urlNen: `https://drive.google.com/thumbnail?id=${file.id}&sz=w1000`
+      }));
     }
 
     if (files.length === 0) {
