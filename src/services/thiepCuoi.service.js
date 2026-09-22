@@ -1,3 +1,54 @@
+
+// Helper giải mã và tối ưu hóa Base64 thành tệp ảnh WebP tĩnh trên máy chủ
+const saveBase64ImageFile = async (base64String, prefix = 'img', host = '') => {
+    if (!base64String || typeof base64String !== 'string') return base64String;
+    if (base64String.startsWith('http://') || base64String.startsWith('https://') || base64String.startsWith('/uploads/')) {
+        return base64String;
+    }
+
+    const matches = base64String.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    let buffer;
+    if (matches && matches.length === 3) {
+        buffer = Buffer.from(matches[2], 'base64');
+    } else if (base64String.length > 200 && !base64String.includes(' ') && !base64String.includes('\n')) {
+        try {
+            buffer = Buffer.from(base64String, 'base64');
+        } catch (e) {
+            return base64String;
+        }
+    } else {
+        return base64String;
+    }
+
+    if (!buffer || buffer.length === 0) return base64String;
+
+    const uploadDir = path.join(__dirname, '../uploads');
+    if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    const filename = `${prefix}-${Date.now()}-${Math.round(Math.random() * 1E6)}.webp`;
+    const destPath = path.join(uploadDir, filename);
+
+    try {
+        const sharp = require('sharp');
+        await sharp(buffer)
+            .rotate()
+            .resize({ width: 2560, height: 2560, fit: 'inside', withoutEnlargement: true })
+            .webp({ quality: 90, effort: 4 })
+            .toFile(destPath);
+    } catch (err) {
+        console.warn("Sharp error on base64 image, saving buffer directly:", err.message);
+        fs.writeFileSync(destPath, buffer);
+    }
+
+    const relativePath = `/uploads/${filename}`;
+    if (host) {
+        return `${host.replace(/\/$/, '')}${relativePath}`;
+    }
+    return relativePath;
+};
+
 const fs = require("fs");
 const path = require("path");
 const ThiepCuoi = require("../models/thiepCuoi.model");
@@ -88,6 +139,49 @@ exports.getMyInvitation = async (req, res) => {
 exports.saveInvitation = async (req, res) => {
     try {
         const data = req.body;
+        const host = (req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : req.protocol) + '://' + req.get('host');
+
+        // Tự động giải mã & tối ưu hóa mọi trường ảnh Base64 trong payload thiệp cưới
+        if (data.mainPhoto && typeof data.mainPhoto === 'string' && data.mainPhoto.startsWith('data:image')) {
+            data.mainPhoto = await saveBase64ImageFile(data.mainPhoto, 'main', host);
+        }
+
+        if (data.groom) {
+            if (data.groom.avatar && typeof data.groom.avatar === 'string' && data.groom.avatar.startsWith('data:image')) {
+                data.groom.avatar = await saveBase64ImageFile(data.groom.avatar, 'groom', host);
+            }
+            if (data.groom.qrCode && typeof data.groom.qrCode === 'string' && data.groom.qrCode.startsWith('data:image')) {
+                data.groom.qrCode = await saveBase64ImageFile(data.groom.qrCode, 'qr-groom', host);
+            }
+        }
+
+        if (data.bride) {
+            if (data.bride.avatar && typeof data.bride.avatar === 'string' && data.bride.avatar.startsWith('data:image')) {
+                data.bride.avatar = await saveBase64ImageFile(data.bride.avatar, 'bride', host);
+            }
+            if (data.bride.qrCode && typeof data.bride.qrCode === 'string' && data.bride.qrCode.startsWith('data:image')) {
+                data.bride.qrCode = await saveBase64ImageFile(data.bride.qrCode, 'qr-bride', host);
+            }
+        }
+
+        if (Array.isArray(data.gallery)) {
+            data.gallery = await Promise.all(data.gallery.map(async (img) => {
+                if (typeof img === 'string' && img.startsWith('data:image')) {
+                    return await saveBase64ImageFile(img, 'gallery', host);
+                }
+                return img;
+            }));
+        }
+
+        if (Array.isArray(data.guestList)) {
+            data.guestList = await Promise.all(data.guestList.map(async (guest) => {
+                if (guest && guest.avatar && typeof guest.avatar === 'string' && guest.avatar.startsWith('data:image')) {
+                    const savedAvatar = await saveBase64ImageFile(guest.avatar, 'guest', host);
+                    return { ...guest, avatar: savedAvatar };
+                }
+                return guest;
+            }));
+        }
         const customerId = req.user?.id || data.khachHangId;
 
         if (!data.invitationId) {
@@ -976,63 +1070,85 @@ exports.checkInvitationPermission = async (req, res) => {
 
 exports.validateCustomerInvitationEligibility = validateCustomerInvitationEligibility;
 
-// API Upload ảnh thiệp cưới trực tiếp từ trình duyệt (cho Dâu Rể & Khách mời)
+// API Upload ảnh thiệp cưới trực tiếp (Hỗ trợ chuỗi Base64 trong payload JSON hoặc tệp Multipart)
 exports.uploadInvitationImage = async (req, res) => {
     try {
-        if (!req.file) {
-            return res.status(400).json({ 
-                status: "error", 
-                success: false, 
-                message: "Vui lòng chọn tệp ảnh hợp lệ để tải lên!" 
+        const host = (req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : req.protocol) + '://' + req.get('host');
+        const uploadDir = path.join(__dirname, '../uploads');
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+
+        // Trường hợp 1: Nhận chuỗi Base64 truyền trong payload JSON
+        const rawBase64 = req.body?.base64 || req.body?.image || req.body?.data;
+        if (rawBase64 && typeof rawBase64 === 'string') {
+            const relativePath = await saveBase64ImageFile(rawBase64, 'opt');
+            const absoluteUrl = `${host}${relativePath}`;
+            const filename = path.basename(relativePath);
+
+            return res.status(200).json({
+                status: "success",
+                success: true,
+                message: "Giải mã Base64 và lưu ảnh máy chủ thành công",
+                data: {
+                    url: absoluteUrl,
+                    relativePath: relativePath,
+                    filename: filename,
+                    originalname: req.body?.filename || req.body?.originalname || filename
+                }
             });
         }
 
-        let finalFilename = req.file.filename;
-        const uploadDir = path.join(__dirname, '../uploads');
-        const originalFilePath = path.join(uploadDir, req.file.filename);
+        // Trường hợp 2: Nhận tệp Multipart từ form-data
+        if (req.file) {
+            let finalFilename = req.file.filename;
+            const originalFilePath = path.join(uploadDir, req.file.filename);
 
-        // Tự động tối ưu hóa ảnh bằng Sharp nếu ảnh kích thước lớn
-        try {
-            const sharp = require('sharp');
-            const ext = path.extname(req.file.originalname).toLowerCase();
-            
-            // Nếu là ảnh (không phải audio/gif animated)
-            if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext) || req.file.mimetype.startsWith('image/')) {
-                const optimizedFilename = 'opt-' + Date.now() + '-' + Math.round(Math.random() * 1E6) + '.webp';
-                const optimizedFilePath = path.join(uploadDir, optimizedFilename);
+            try {
+                const sharp = require('sharp');
+                const ext = path.extname(req.file.originalname).toLowerCase();
+                
+                if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext) || req.file.mimetype.startsWith('image/')) {
+                    const optimizedFilename = 'opt-' + Date.now() + '-' + Math.round(Math.random() * 1E6) + '.webp';
+                    const optimizedFilePath = path.join(uploadDir, optimizedFilename);
 
-                await sharp(originalFilePath)
-                    .rotate() // Tự động xoay đúng góc chụp theo EXIF
-                    .resize({ width: 2560, height: 2560, fit: 'inside', withoutEnlargement: true })
-                    .webp({ quality: 90, effort: 4 })
-                    .toFile(optimizedFilePath);
+                    await sharp(originalFilePath)
+                        .rotate()
+                        .resize({ width: 2560, height: 2560, fit: 'inside', withoutEnlargement: true })
+                        .webp({ quality: 90, effort: 4 })
+                        .toFile(optimizedFilePath);
 
-                // Nếu nén thành công, dùng file tối ưu và xóa file gốc tạm nếu khác tên
-                finalFilename = optimizedFilename;
-                try {
-                    if (fs.existsSync(originalFilePath) && originalFilePath !== optimizedFilePath) {
-                        fs.unlinkSync(originalFilePath);
-                    }
-                } catch (e) {}
+                    finalFilename = optimizedFilename;
+                    try {
+                        if (fs.existsSync(originalFilePath) && originalFilePath !== optimizedFilePath) {
+                            fs.unlinkSync(originalFilePath);
+                        }
+                    } catch (e) {}
+                }
+            } catch (optErr) {
+                console.warn("Sharp optimization skipped/failed, keeping original upload:", optErr.message);
             }
-        } catch (optErr) {
-            console.warn("Sharp optimization skipped/failed, keeping original upload:", optErr.message);
+
+            const relativePath = `/uploads/${finalFilename}`;
+            const absoluteUrl = `${host}${relativePath}`;
+
+            return res.status(200).json({
+                status: "success",
+                success: true,
+                message: "Tải và lưu ảnh lên máy chủ thành công",
+                data: {
+                    url: absoluteUrl,
+                    relativePath: relativePath,
+                    filename: finalFilename,
+                    originalname: req.file.originalname
+                }
+            });
         }
 
-        const relativePath = `/uploads/${finalFilename}`;
-        const host = (req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : req.protocol) + '://' + req.get('host');
-        const absoluteUrl = `${host}${relativePath}`;
-
-        return res.status(200).json({
-            status: "success",
-            success: true,
-            message: "Tải và lưu ảnh lên máy chủ thành công",
-            data: {
-                url: absoluteUrl,
-                relativePath: relativePath,
-                filename: finalFilename,
-                originalname: req.file.originalname
-            }
+        return res.status(400).json({ 
+            status: "error", 
+            success: false, 
+            message: "Vui lòng cung cấp chuỗi Base64 hoặc tệp ảnh hợp lệ để tải lên!" 
         });
     } catch (error) {
         console.error("Lỗi khi tải ảnh thiệp cưới lên backend:", error);
