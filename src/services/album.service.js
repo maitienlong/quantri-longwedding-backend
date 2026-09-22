@@ -27,8 +27,19 @@ const syncDriveToAlbum = async (req, res) => {
 
     if (!isGooglePhotos) {
       // Extract folder ID from link
-      const match = driveLink.match(/folders\/([a-zA-Z0-9-_]+)/);
-      folderIdOrLink = match ? match[1] : driveLink;
+      const folderMatch = driveLink.match(/folders\/([a-zA-Z0-9-_]+)/);
+      const idMatch = driveLink.match(/id=([a-zA-Z0-9-_]+)/);
+      const dMatch = driveLink.match(/\/d\/([a-zA-Z0-9-_]+)/);
+
+      if (folderMatch) {
+          folderIdOrLink = folderMatch[1];
+      } else if (idMatch) {
+          folderIdOrLink = idMatch[1];
+      } else if (dMatch) {
+          folderIdOrLink = dMatch[1];
+      } else {
+          folderIdOrLink = driveLink;
+      }
 
       if (!process.env.APPS_SCRIPT_URL) {
         return res.status(500).json({ status: 'error', message: 'Chưa cấu hình APPS_SCRIPT_URL trong .env' });
@@ -64,6 +75,12 @@ const syncDriveToAlbum = async (req, res) => {
 
     // Lấy lại album sau khi đã đồng bộ xong
     const updatedAlbum = await ALBUM.findById(album._id);
+    
+    // Kiểm tra trạng thái xem có lỗi không
+    const currentStatus = loaiAnh === 'goc' ? updatedAlbum.trangThai : updatedAlbum.trangThaiChinhSua;
+    if (currentStatus === 'Lỗi đồng bộ') {
+      return res.status(400).json({ status: 'error', message: 'Lỗi đồng bộ ảnh. Vui lòng kiểm tra lại đường dẫn chia sẻ!', album: updatedAlbum });
+    }
 
     return res.status(200).json({ status: 'success', message: 'Đã đồng bộ xong ảnh từ Google.', album: updatedAlbum });
 
