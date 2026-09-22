@@ -11,6 +11,11 @@ router.post("/get-facebook-avatar", thiepCuoiService.getFacebookAvatar);
 router.post("/upload-image", upload.single("image"), thiepCuoiService.uploadInvitationImage);
 // Public routes xem trước Open Graph (SEO Crawler Zalo / Facebook Messenger)
 router.get("/p/:id", thiepCuoiService.getInvitationShareSeo);
+router.get("/p/:id/:guestSlug", thiepCuoiService.getInvitationShareSeo);
+router.get("/t/:id", thiepCuoiService.getInvitationShareSeo);
+router.get("/t/:id/:guestSlug", thiepCuoiService.getInvitationShareSeo);
+router.get("/moi/:id", thiepCuoiService.getInvitationShareSeo);
+router.get("/moi/:id/:guestSlug", thiepCuoiService.getInvitationShareSeo);
 router.get("/share/:id", thiepCuoiService.getInvitationShareSeo);
 router.get("/preview-seo/:id", thiepCuoiService.getInvitationShareSeo);
 

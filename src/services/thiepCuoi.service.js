@@ -56,13 +56,73 @@ const KhachHang = require("../models/khachHang.model");
 const HopDong = require("../models/hopDong.model");
 const { success, error } = require("../utils/response");
 
+
+function removeVietnameseTones(str) {
+    if (!str) return '';
+    str = str.replace(/à|á|ạ|ả|ã|â|ầ|ấ|ậ|ẩ|ẫ|ă|ằ|ắ|ặ|ẳ|ẵ/g, "a");
+    str = str.replace(/è|é|ẹ|ẻ|ẽ|ê|ề|ế|ệ|ể|ễ/g, "e");
+    str = str.replace(/ì|í|ị|ỉ|ĩ/g, "i");
+    str = str.replace(/ò|ó|ọ|ỏ|õ|ô|ồ|ố|ộ|ổ|ỗ|ơ|ờ|ớ|ợ|ở|ỡ/g, "o");
+    str = str.replace(/ù|ú|ụ|ủ|ũ|ư|ừ|ứ|ự|ử|ữ/g, "u");
+    str = str.replace(/ỳ|ý|ỵ|ỷ|ỹ/g, "y");
+    str = str.replace(/đ/g, "d");
+    str = str.replace(/À|Á|Ạ|Ả|Ã|Â|Ầ|Ấ|Ậ|Ẩ|Ẫ|Ă|Ằ|Ắ|Ặ|Ẳ|Ẵ/g, "A");
+    str = str.replace(/È|É|Ẹ|Ẻ|Ẽ|Ê|Ề|Ế|Ệ|Ể|Ễ/g, "E");
+    str = str.replace(/Ì|Í|Ị|Ỉ|Ĩ/g, "I");
+    str = str.replace(/Ò|Ó|Ọ|Ỏ|Õ|Ô|Ồ|Ố|Ộ|Ổ|Ỗ|Ơ|Ờ|Ớ|Ợ|Ở|Ỡ/g, "O");
+    str = str.replace(/Ù|Ú|Ụ|Ủ|Ũ|Ư|Ừ|Ứ|Ự|Ử|Ữ/g, "U");
+    str = str.replace(/Ỳ|Ý|Ỵ|Ỷ|Ỹ/g, "Y");
+    str = str.replace(/Đ/g, "D");
+    return str;
+}
+
+function generateSlugFromNames(groom, bride) {
+    const cleanG = removeVietnameseTones(groom || '').trim().toLowerCase().split(/\s+/).pop();
+    const cleanB = removeVietnameseTones(bride || '').trim().toLowerCase().split(/\s+/).pop();
+    if (cleanG && cleanB) return `${cleanG}-${cleanB}`;
+    const fullG = removeVietnameseTones(groom || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '-');
+    const fullB = removeVietnameseTones(bride || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '-');
+    if (fullG || fullB) return `${fullG || ''}-${fullB || ''}`.replace(/^-+|-+$/g, '').replace(/-+/g, '-');
+    return `wedding-${Date.now().toString(36)}`;
+}
+
+async function findInvitationByAnyId(id) {
+    if (!id) return null;
+    const cleanId = String(id).trim();
+    const cleanLower = cleanId.toLowerCase();
+    
+    // 1. Tìm chính xác theo invitationId, shortCode, customSlug, slug hoặc _id
+    let invitation = await ThiepCuoi.findOne({
+        $or: [
+            { invitationId: cleanId },
+            { shortCode: cleanLower },
+            { customSlug: cleanLower },
+            { slug: cleanLower },
+            ...(cleanId.match(/^[0-9a-fA-F]{24}$/) ? [{ _id: cleanId }] : [])
+        ]
+    });
+
+    if (invitation) return invitation;
+
+    // 2. Tìm mềm: số hợp đồng hoặc tên
+    const safeRegex = cleanLower.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const queries = [
+        { invitationId: new RegExp(safeRegex, 'i') },
+        { customSlug: new RegExp(`^${safeRegex}$`, 'i') },
+        { shortCode: cleanLower }
+    ];
+    if (/^\d+$/.test(cleanLower)) {
+        queries.push({ invitationId: new RegExp(`hd[-_]?\\d*[-_]?${cleanLower}`, 'i') });
+    }
+
+    return await ThiepCuoi.findOne({ $or: queries });
+}
+
 // 1. Lấy thông tin thiệp cưới theo invitationId
 exports.getInvitationById = async (req, res) => {
     try {
         const { id } = req.params;
-        let invitation = await ThiepCuoi.findOne({
-            $or: [{ invitationId: id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }]
-        });
+        let invitation = await findInvitationByAnyId(id);
 
         if (!invitation) {
             return error(res, "Không tìm thấy thiệp cưới", 404);
@@ -181,6 +241,14 @@ exports.saveInvitation = async (req, res) => {
                 }
                 return guest;
             }));
+        }
+        // Tự động sinh shortCode và customSlug nếu chưa có
+        if (!data.shortCode && data.invitationId) {
+            const m = data.invitationId.match(/hd[-_]?\d*[-_]?(\d+)/i);
+            if (m && m[1]) data.shortCode = m[1];
+        }
+        if (!data.customSlug && (data.groom?.name || data.bride?.name)) {
+            data.customSlug = generateSlugFromNames(data.groom?.name, data.bride?.name);
         }
         const customerId = req.user?.id || data.khachHangId;
 
@@ -725,12 +793,13 @@ exports.getFacebookAvatar = async (req, res) => {
 // 12. Phục vụ Open Graph Preview động cho Zalo, Facebook Messenger, iMessage, SMS
 exports.getInvitationShareSeo = async (req, res) => {
     try {
-        const { id } = req.params;
-        let invitation = await ThiepCuoi.findOne({
-            $or: [{ invitationId: id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }]
-        });
+        const { id, guestSlug } = req.params;
+        let invitation = await findInvitationByAnyId(id);
 
-        const rawGuest = (req.query.guest || req.query.to || req.query.khach || '').trim();
+        let rawGuest = (req.query.to || req.query.guest || req.query.khach || '').trim();
+        if (!rawGuest && guestSlug) {
+            rawGuest = decodeURIComponent(guestSlug).replace(/[-_]+/g, ' ').trim();
+        }
         let guestName = 'Quý Khách';
         if (rawGuest) {
             // Chuẩn hóa tên khách mời, loại bỏ tiền tố thừa như "Kính mời:", "Kính gửi", "Gửi"
@@ -802,18 +871,42 @@ exports.getInvitationShareSeo = async (req, res) => {
             description = `Trân trọng kính mời ${guestName} đến tham dự lễ ${partText} và chung vui cùng ${coupleNames} ${timeStr} ${dateStr} ${venueStr}. Sự hiện diện của bạn là niềm vinh hạnh to lớn cho chúng tôi!`.replace(/\s+/g, ' ').trim();
         }
 
-        // Hình ảnh bìa cưới (OG Image)
-        let imageUrl = invitation?.mainPhoto || '';
-        if (!imageUrl && invitation?.gallery && invitation.gallery.length > 0) {
-            imageUrl = invitation.gallery[0];
+        // Hình ảnh bìa cưới dâu rể (OG Image / Thumbnail: Ưu tiên ảnh dâu rể trong thiệp, KHÔNG dùng logo)
+        let imageUrl = (invitation?.mainPhoto && typeof invitation.mainPhoto === 'string' && !invitation.mainPhoto.includes('placeholder')) ? invitation.mainPhoto.trim() : '';
+        if (!imageUrl && Array.isArray(invitation?.gallery) && invitation.gallery.length > 0) {
+            const validGallery = invitation.gallery.find(img => img && typeof img === 'string' && !img.includes('placeholder'));
+            if (validGallery) imageUrl = validGallery.trim();
         }
+        if (!imageUrl && invitation?.groom?.avatar && typeof invitation.groom.avatar === 'string' && !invitation.groom.avatar.includes('placeholder') && !invitation.groom.avatar.includes('avatar-placeholder')) {
+            imageUrl = invitation.groom.avatar.trim();
+        }
+        if (!imageUrl && invitation?.bride?.avatar && typeof invitation.bride.avatar === 'string' && !invitation.bride.avatar.includes('placeholder') && !invitation.bride.avatar.includes('avatar-placeholder')) {
+            imageUrl = invitation.bride.avatar.trim();
+        }
+
+        // Nếu chưa upload ảnh dâu rể riêng, dùng ảnh cưới dâu rể mẫu theo Template thiệp (TUYỆT ĐỐI KHÔNG DÙNG LOGO)
         if (!imageUrl) {
-            imageUrl = 'https://longwedding.vn/logo192.png';
-        } else if (imageUrl.startsWith('/uploads') || imageUrl.startsWith('uploads')) {
-            const host = req.get('host');
-            const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
-            const baseUrl = `${protocol}://${host}`;
-            imageUrl = `${baseUrl}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+            const tplId = (invitation?.templateId || invitation?.themeId || id || '').toLowerCase();
+            if (tplId.includes('song-hy') || tplId.includes('songhy')) {
+                imageUrl = '/images/song-hy/hero-arch.jpg';
+            } else if (tplId.includes('dreamy')) {
+                imageUrl = '/images/dreamy/palace.jpg';
+            } else {
+                imageUrl = '/images/song-hy/hero-arch.jpg';
+            }
+        }
+
+        // Chuẩn hóa đường dẫn ảnh tuyệt đối (Full URL) để Zalo / Facebook / Messenger hiển thị chuẩn xác
+        const isLocalHost = req.hostname === 'localhost' || req.hostname === '127.0.0.1';
+        const clientBase = process.env.CLIENT_URL || process.env.REACT_APP_CLIENT_WEBSITE_URL || (isLocalHost ? 'http://localhost:3000' : 'https://longwedding.vn');
+        const apiHostBase = (req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http') + '://' + req.get('host');
+
+        if (imageUrl.startsWith('/uploads') || imageUrl.startsWith('uploads')) {
+            imageUrl = `${apiHostBase}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+        } else if (imageUrl.startsWith('/')) {
+            imageUrl = `${clientBase}${imageUrl}`;
+        } else if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://')) {
+            imageUrl = `${clientBase}/${imageUrl}`;
         }
 
         // Đường dẫn đích trên React Frontend
@@ -832,6 +925,9 @@ exports.getInvitationShareSeo = async (req, res) => {
         const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
         const currentFullUrl = `${protocol}://${host}${req.originalUrl}`;
 
+        const userAgent = (req.headers['user-agent'] || '').toLowerCase();
+        const isBot = /facebookexternalhit|facebot|zalo|twitterbot|telegrambot|whatsapp|skypeuripreview|linkedinbot|applebot|googlebot|bingbot/i.test(userAgent);
+        
         const html = `<!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -856,6 +952,8 @@ exports.getInvitationShareSeo = async (req, res) => {
   <meta property="zalo:title" content="${title}">
   <meta property="zalo:description" content="${description}">
   <meta property="zalo:image" content="${imageUrl}">
+  <meta property="og:image:type" content="image/jpeg">
+  <link rel="image_src" href="${imageUrl}">
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
@@ -867,13 +965,15 @@ exports.getInvitationShareSeo = async (req, res) => {
   <!-- Canonical -->
   <link rel="canonical" href="${currentFullUrl}">
 
-  <!-- Chuyển hướng tức thì vào ứng dụng React SPA -->
+  ${!isBot ? `
+  <!-- Chuyển hướng người dùng thực tế vào ứng dụng React SPA -->
   <script>
     window.location.replace("${targetUrl}");
   </script>
   <noscript>
     <meta http-equiv="refresh" content="0;url=${targetUrl}">
   </noscript>
+  ` : ''}
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;

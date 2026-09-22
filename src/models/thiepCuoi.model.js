@@ -30,6 +30,9 @@ const wishSchema = new mongoose.Schema({
 
 const thiepCuoiSchema = new mongoose.Schema({
     invitationId: { type: String, required: true, unique: true, index: true },
+    shortCode: { type: String, index: true, sparse: true },
+    customSlug: { type: String, index: true, sparse: true },
+    slug: { type: String, index: true, sparse: true },
     khachHangId: { type: mongoose.Schema.Types.ObjectId, ref: "khachhang", index: true },
     maHopDong: { type: String, default: "" },
     templateId: { type: String, default: "tpl-luxury-gold" },
@@ -112,11 +115,25 @@ const thiepCuoiSchema = new mongoose.Schema({
     showRsvp: { type: Boolean, default: true },
     showGuestbook: { type: Boolean, default: true },
 
+        // Quy định trang phục (Dress Code)
+    showDressCode: { type: Boolean, default: true },
+    dresscode: [{ type: String }],
+    dressCode: [{ type: String }],
+    dressCodeNote: { type: String, default: "" },
+
+    // Lịch trình ngày cưới (Wedding Timeline)
+    showTimeline: { type: Boolean, default: true },
+    timeline: [{
+        time: { type: String, default: "" },
+        title: { type: String, default: "" },
+        desc: { type: String, default: "" }
+    }],
+
     guestList: [guestSchema],
     rsvps: [rsvpSchema],
     wishes: [wishSchema],
 
     isPublished: { type: Boolean, default: true }
-}, { timestamps: true });
+}, { timestamps: true, strict: false });
 
 module.exports = mongoose.model("thiepcuoi", thiepCuoiSchema);

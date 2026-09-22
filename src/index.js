@@ -96,6 +96,8 @@ app.use('/baoCao', baoCaoRoutes);
 app.use('/api/website', websiteRoutes);
 app.use('/api/thiep-cuoi', thiepCuoiRoutes);
 app.use('/thiep-cuoi', thiepCuoiRoutes);
+const thiepCuoiService = require("./services/thiepCuoi.service");
+app.get(['/t/:id', '/t/:id/:guestSlug', '/moi/:id', '/moi/:id/:guestSlug', '/p/:id', '/p/:id/:guestSlug', '/thiep/:id', '/thiep/:id/:guestSlug'], thiepCuoiService.getInvitationShareSeo);
 app.use('/api/album', albumRoutes);
 app.use('/api/log', logRoutes);
 app.use('/api/visitors', visitorsRoutes);
