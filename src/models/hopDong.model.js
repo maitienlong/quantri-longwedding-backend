@@ -41,7 +41,14 @@ const cartItemSchema = new mongoose.Schema({
   trangPhucVestChuReNgayCuoi: { type: String, default: "" },
   hoaCamTay: { type: String, default: "" },
   maLoaiThiep: { type: String, default: "" },
-  tenLoaiThiep: { type: String, default: "" }
+  tenLoaiThiep: { type: String, default: "" },
+
+  // Lịch trình trang điểm khi dịch vụ là makeup phát sinh
+  ngayTrangDiem: { type: Date },
+  gioTrangDiem: { type: String, default: "" },
+  diaDiemTrangDiem: { type: String, default: "" },
+  thoMakeUp: { type: String, default: "" },
+  ghiChuTrangDiem: { type: String, default: "" }
 });
 
 const toDate = (v) => {
@@ -92,8 +99,23 @@ const hopDongSchema = new mongoose.Schema({
     ngayTraDo: { type: Date },
     gioChup: { type: String },
     diaDiemChup: { type: String },
-    chotLich: { type: String }
+    chotLich: { type: String },
+    ngayTrangDiem: { type: Date },
+    gioTrangDiem: { type: String },
+    diaDiemTrangDiem: { type: String }
   },
+  lichTrangDiem: [
+    {
+      id: { type: String },
+      dichVuId: { type: String },
+      tenDichVu: { type: String },
+      ngayTrangDiem: { type: Date },
+      gioTrangDiem: { type: String },
+      diaDiem: { type: String },
+      thoMakeUp: { type: String },
+      ghiChu: { type: String }
+    }
+  ],
   nguoiPhucVu: {
     thoChupHinh: { type: String },
     thoChinhAnh: { type: String },

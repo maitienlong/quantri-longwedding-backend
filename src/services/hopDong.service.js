@@ -138,7 +138,8 @@ async function create(req, res) {
             nguoiPhucVu: req.body.nguoiPhucVu,
             giaiDoan: req.body.giaiDoan,
             dichVuChinh: req.body.dichVuChinh,
-            isSpecialCollection: req.body.isSpecialCollection || false
+            isSpecialCollection: req.body.isSpecialCollection || false,
+            lichTrangDiem: req.body.lichTrangDiem || []
         });
 
         // Xử lý khách thanh toán trước
@@ -258,11 +259,12 @@ async function create(req, res) {
 
 async function update(req, res) {
     try {
-        const { maHopDong, gioHang, thanhToan, nguoiPhucVu, giaiDoan, cacNgay, linkAnhGoc, linkAnhChinhSua, danhSachAnhIn, isSpecialCollection } = req.body;
+        const { maHopDong, gioHang, thanhToan, nguoiPhucVu, giaiDoan, cacNgay, linkAnhGoc, linkAnhChinhSua, danhSachAnhIn, isSpecialCollection, lichTrangDiem } = req.body;
         const hopDong = await HopDong.findOne({ maHopDong });
         if (!hopDong) return error(res, "Không tìm thấy hợp đồng");
 
         if (isSpecialCollection !== undefined) hopDong.isSpecialCollection = isSpecialCollection;
+        if (lichTrangDiem !== undefined) hopDong.lichTrangDiem = lichTrangDiem;
         if (gioHang !== undefined) {
             hopDong.gioHang = Array.isArray(gioHang) ? gioHang.map(item => {
                 const donGia = parseFloat(item.donGia?.toString().replace(/[^0-9.-]+/g, "") || item.giaChoThueDichVu?.toString().replace(/[^0-9.-]+/g, "") || 0);
