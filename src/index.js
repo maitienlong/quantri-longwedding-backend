@@ -82,6 +82,8 @@ const voucherRoutes = require("./routes/voucher.router");
 
 app.use('/auth', authRoutes);
 app.use('/khachHang', khachHangRoutes);
+app.use('/api/khach-hang', khachHangRoutes);
+app.use('/api/khachHang', khachHangRoutes);
 app.use('/dichVu', dichVuRoutes);
 app.use('/hopDong', hopDongRoutes);
 app.use('/chiTieu', chiTieuRoutes);

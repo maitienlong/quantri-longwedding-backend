@@ -10,4 +10,12 @@ router.post("/kinh-doanh", authMiddleware, checkRole(["Quản lý"]), baoCaoServ
 // POST /api/bao-cao/tong-quan (Alias)
 router.post("/tong-quan", authMiddleware, checkRole(["Quản lý"]), baoCaoService.getBaoCaoKinhDoanh);
 
+// POST & GET /api/bao-cao/lich-su-thanh-toan (Tổng hợp bảng lịch sử khách hàng thanh toán)
+router.post("/lich-su-thanh-toan", authMiddleware, baoCaoService.getLichSuThanhToan);
+router.get("/lich-su-thanh-toan", authMiddleware, baoCaoService.getLichSuThanhToan);
+
+// POST & GET /api/bao-cao/thong-ke-khach-hang (Thống kê khách hàng theo ngày/tuần/tháng/năm)
+router.post("/thong-ke-khach-hang", authMiddleware, baoCaoService.getThongKeKhachHang);
+router.get("/thong-ke-khach-hang", authMiddleware, baoCaoService.getThongKeKhachHang);
+
 module.exports = router;

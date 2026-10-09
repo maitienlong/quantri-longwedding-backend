@@ -6,7 +6,10 @@ const paymentSchema = new mongoose.Schema({
     amount: { type: Number, required: true },
     date: { type: Date, required: true },
     method: { type: String, required: true },
-    noiDung: { type: String }
+    noiDung: { type: String },
+    maHopDong: { type: String },
+    hopDongId: { type: mongoose.Schema.Types.ObjectId, ref: "hopdong" },
+    khachHangId: { type: mongoose.Schema.Types.ObjectId, ref: "khachhang" }
 }, {
     timestamps: true
 });
