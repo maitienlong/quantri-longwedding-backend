@@ -259,9 +259,11 @@ async function create(req, res) {
 
 async function update(req, res) {
     try {
-        const { maHopDong, gioHang, thanhToan, nguoiPhucVu, giaiDoan, cacNgay, linkAnhGoc, linkAnhChinhSua, danhSachAnhIn, isSpecialCollection, lichTrangDiem } = req.body;
+        const { maHopDong, gioHang, thanhToan, nguoiPhucVu, giaiDoan, cacNgay, linkAnhGoc, linkAnhChinhSua, danhSachAnhIn, isSpecialCollection, lichTrangDiem, dichVuChinh } = req.body;
         const hopDong = await HopDong.findOne({ maHopDong });
         if (!hopDong) return error(res, "Không tìm thấy hợp đồng");
+
+        if (dichVuChinh !== undefined) hopDong.dichVuChinh = Number(dichVuChinh);
 
         if (isSpecialCollection !== undefined) hopDong.isSpecialCollection = isSpecialCollection;
         if (lichTrangDiem !== undefined) hopDong.lichTrangDiem = lichTrangDiem;

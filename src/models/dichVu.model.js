@@ -24,7 +24,9 @@ const dichVuSchema = new mongoose.Schema({
     trangPhucChuReNgayAnHoi: { type: String, default: "" },
     trangPhucVayCuoiNgayCuoi: { type: String, default: "" },
     trangPhucVestChuReNgayCuoi: { type: String, default: "" },
-    hoaCamTay: { type: String, default: "" }
+    hoaCamTay: { type: String, default: "" },
+    soLuongLichChup: { type: Number, default: 0 },
+    soLuongLichMake: { type: Number, default: 0 }
 }, {
     timestamps: true
 });

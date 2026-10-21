@@ -14,45 +14,315 @@ const verifyAlbumOwnership = async (album, user) => {
          (hopDong.khachHang2 && hopDong.khachHang2.toString() === user.id);
 };
 
-// Middleware xử lý
+/**
+ * Trích xuất và kiểm tra thông tin đường dẫn Google Drive / Photos
+ */
+const parseGoogleLink = (rawLink) => {
+  if (!rawLink || typeof rawLink !== 'string') {
+    return { valid: false, message: 'Đường dẫn không hợp lệ hoặc đang để trống.' };
+  }
+
+  const cleanLink = rawLink.trim();
+  const isGooglePhotos = cleanLink.includes('photos.app.goo.gl') || cleanLink.includes('photos.google.com');
+
+  if (isGooglePhotos) {
+    return { valid: true, isGooglePhotos: true, target: cleanLink };
+  }
+
+  // Kiểm tra nếu người dùng vô tình dán link file đơn lẻ thay vì link thư mục
+  if (cleanLink.includes('/file/d/')) {
+    return {
+      valid: false,
+      message: 'Đường dẫn bạn nhập là một tệp đơn lẻ, không phải Thư mục. Vui lòng dán link Thư mục (Folder) Google Drive chứa ảnh.'
+    };
+  }
+
+  // Bóc tách Folder ID
+  let folderId = '';
+  const folderMatch = cleanLink.match(/\/folders\/([a-zA-Z0-9\-_]{15,})/);
+  const idMatch = cleanLink.match(/[?&]id=([a-zA-Z0-9\-_]{15,})/);
+  const dMatch = cleanLink.match(/\/d\/([a-zA-Z0-9\-_]{15,})/);
+
+  if (folderMatch) {
+    folderId = folderMatch[1];
+  } else if (idMatch) {
+    folderId = idMatch[1];
+  } else if (dMatch) {
+    folderId = dMatch[1];
+  } else if (/^[a-zA-Z0-9\-_]{15,50}$/.test(cleanLink)) {
+    folderId = cleanLink;
+  } else {
+    // Thử tách phần cuối cùng của đường dẫn nếu là ID
+    const noQuery = cleanLink.split('?')[0].replace(/\/+$/, '');
+    const parts = noQuery.split('/');
+    const last = parts[parts.length - 1];
+    if (last && /^[a-zA-Z0-9\-_]{15,50}$/.test(last)) {
+      folderId = last;
+    }
+  }
+
+  if (!folderId) {
+    return {
+      valid: false,
+      message: 'Không thể nhận diện mã thư mục (Folder ID) từ đường dẫn Google Drive. Vui lòng kiểm tra lại đường link.'
+    };
+  }
+
+  return { valid: true, isGooglePhotos: false, target: folderId, folderId };
+};
+
+/**
+ * Gọi Google Apps Script lấy danh sách file Drive kèm cơ chế Retry tự động
+ */
+const fetchDriveFilesWithRetry = async (folderId, maxRetries = 1) => {
+  const scriptUrl = process.env.APPS_SCRIPT_URL;
+  if (!scriptUrl) {
+    throw new Error('Chưa cấu hình biến APPS_SCRIPT_URL trong file .env của backend.');
+  }
+
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await axios.get(`${scriptUrl}?folderId=${folderId}`, {
+        timeout: 65000, // Chờ tối đa 65s cho các thư mục lớn
+        headers: {
+          'User-Agent': 'LongWedding-SyncClient/2.0'
+        }
+      });
+
+      if (!response.data) {
+        throw new Error('Không nhận được dữ liệu phản hồi từ Google Apps Script.');
+      }
+
+      if (response.data.status !== 'success') {
+        const msg = response.data.message || 'Lỗi truy xuất từ Google Apps Script.';
+        const err = new Error(msg);
+        err.code = response.data.code;
+        throw err;
+      }
+
+      const files = response.data.data || [];
+      return {
+        files: files.map(f => ({
+          id: f.id,
+          name: f.name,
+          urlGoc: `https://drive.google.com/uc?id=${f.id}`,
+          urlNen: `https://drive.google.com/thumbnail?id=${f.id}&sz=w1000`
+        })),
+        folderName: response.data.folderName || 'Google Drive Folder',
+        method: response.data.method || 'AppsScript'
+      };
+
+    } catch (err) {
+      lastError = err;
+      console.warn(`[DriveSync] Lần thử ${attempt + 1}/${maxRetries + 1} thất bại:`, err.message);
+
+      // Nếu là lỗi phân quyền rõ ràng thì không cần retry vô ích
+      if (err.code === 'PERMISSION_DENIED' || err.code === 'NOT_A_FOLDER' || err.message?.includes('quyền truy cập') || err.message?.includes('chia sẻ')) {
+        break;
+      }
+
+      if (attempt < maxRetries) {
+        // Đợi 2 giây trước khi thử lại
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+  }
+
+  throw lastError;
+};
+
+/**
+ * Trích xuất ảnh từ Album Google Photos (Nâng cấp đa luồng Regex & JSON Parsing)
+ */
+const fetchGooglePhotosFiles = async (photosUrl) => {
+  const response = await axios.get(photosUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      'Accept-Language': 'vi,en-US;q=0.9,en;q=0.8'
+    },
+    maxRedirects: 10,
+    timeout: 30000
+  });
+
+  const html = response.data || '';
+
+  // 1. Trích xuất toàn bộ URL chứa /pw/ (Public Web của Google Photos)
+  const pwRegex = /https:\/\/lh3\.googleusercontent\.com\/pw\/[A-Za-z0-9\-_]+/g;
+  let matches = html.match(pwRegex) || [];
+
+  // 2. Nếu không có /pw/, tìm kiếm các URL ảnh chất lượng cao trên googleusercontent
+  if (matches.length === 0) {
+    const rawLh3 = html.match(/https:\/\/[a-z0-9\-_.]+\.googleusercontent\.com\/[A-Za-z0-9\-_]{60,}/g) || [];
+    // Lọc bỏ avatar, icon hệ thống (ogw, photosui, google logo)
+    matches = rawLh3.filter(u => !u.includes('/ogw/') && !u.includes('/a/ACg') && !u.includes('photosui') && !u.includes('default-user'));
+  }
+
+  // 3. Tìm kiếm trong các mảng dữ liệu JSON nếu regex thông thường chưa đủ
+  if (matches.length === 0) {
+    const jsonMatches = html.match(/\["(https:\/\/[^"]+googleusercontent[^"]+)",\d+,\d+/g) || [];
+    jsonMatches.forEach(m => {
+      const uMatch = m.match(/https:\/\/[^"]+/);
+      if (uMatch) matches.push(uMatch[0]);
+    });
+  }
+
+  const uniqueUrls = [...new Set(matches)];
+  const photoUrls = uniqueUrls.filter(url => url.length > 50 && !url.includes('=s'));
+
+  if (photoUrls.length === 0) {
+    throw new Error('Không tìm thấy ảnh nào trong Album Google Photos này. Vui lòng đảm bảo album đã được bật quyền: "Bất kỳ ai có đường liên kết đều xem được", hoặc ưu tiên dùng Thư mục Google Drive.');
+  }
+
+  // Trích xuất tên file nguyên bản từ HTML
+  const filenameRegex = /"([^"\/\\#\?]+\.(?:jpg|jpeg|png|heic|heif|gif|JPG|JPEG|PNG|HEIC|HEIF|GIF))"/g;
+  const filenames = [];
+  let fMatch;
+  while ((fMatch = filenameRegex.exec(html)) !== null) {
+    filenames.push(fMatch[1]);
+  }
+
+  return {
+    files: photoUrls.map((url, index) => ({
+      id: url.split('/').pop().replace(/=.*$/, ''),
+      name: filenames[index] || `Photo_${index + 1}.jpg`,
+      urlGoc: `${url}=s0`,
+      urlNen: `${url}=w1000`
+    })),
+    folderName: 'Google Photos Album',
+    method: 'GooglePhotos_Scraper'
+  };
+};
+
+/**
+ * Xử lý đồng bộ ảnh và cập nhật vào Database
+ */
+const processImagesInBackground = async (albumId, parsedInfo, loaiAnh) => {
+  const album = await ALBUM.findById(albumId);
+  if (!album) {
+    return { success: false, message: 'Không tìm thấy Album trong cơ sở dữ liệu.' };
+  }
+
+  try {
+    let resultFiles = [];
+
+    if (parsedInfo.isGooglePhotos) {
+      const gPhotosResult = await fetchGooglePhotosFiles(parsedInfo.target);
+      resultFiles = gPhotosResult.files;
+    } else {
+      const driveResult = await fetchDriveFilesWithRetry(parsedInfo.target, 1);
+      resultFiles = driveResult.files;
+    }
+
+    if (!resultFiles || resultFiles.length === 0) {
+      if (loaiAnh === 'goc') {
+        album.danhSachAnh = [];
+        album.trangThai = 'Hoàn thành';
+      } else {
+        album.danhSachAnhChinhSua = [];
+        album.trangThaiChinhSua = 'Hoàn thành';
+      }
+      album.lastError = '';
+      await album.save();
+      return { success: true, count: 0, message: 'Thư mục hiện tại không có ảnh nào.', album };
+    }
+
+    // Bảo tồn các lựa chọn cũ của khách (thả tim, bình luận)
+    const existingPhotosMap = new Map();
+    const currentList = loaiAnh === 'goc' ? (album.danhSachAnh || []) : (album.danhSachAnhChinhSua || []);
+    currentList.forEach(p => {
+      if (p.idDrive) existingPhotosMap.set(p.idDrive, p);
+      if (p.tenFile) existingPhotosMap.set(p.tenFile, p);
+    });
+
+    const newPhotos = [];
+    for (let file of resultFiles) {
+      const existing = existingPhotosMap.get(file.id) || existingPhotosMap.get(file.name);
+      newPhotos.push({
+        idDrive: file.id,
+        tenFile: file.name,
+        urlGoc: file.urlGoc,
+        urlNen: file.urlNen,
+        isHearted: existing ? Boolean(existing.isHearted) : false,
+        comments: existing ? (existing.comments || []) : []
+      });
+    }
+
+    if (loaiAnh === 'goc') {
+      album.danhSachAnh = newPhotos;
+      album.trangThai = 'Hoàn thành';
+    } else {
+      album.danhSachAnhChinhSua = newPhotos;
+      album.trangThaiChinhSua = 'Hoàn thành';
+    }
+    album.lastError = '';
+    await album.save();
+
+    return {
+      success: true,
+      count: newPhotos.length,
+      message: `Đã đồng bộ thành công ${newPhotos.length} ảnh.`,
+      album
+    };
+
+  } catch (err) {
+    console.error(`[SyncError] maHopDong: ${album.maHopDong}, loaiAnh: ${loaiAnh} -`, err.message);
+
+    let friendlyMessage = err.message || 'Lỗi đồng bộ ảnh từ Google.';
+    if (friendlyMessage.includes('timeout') || err.code === 'ECONNABORTED') {
+      friendlyMessage = 'Thời gian đồng bộ quá lâu do thư mục có quá nhiều ảnh hoặc mạng chập chờn. Vui lòng bấm thử lại!';
+    } else if (friendlyMessage.includes('Network Error')) {
+      friendlyMessage = 'Không thể kết nối đến máy chủ Google. Vui lòng kiểm tra lại kết nối mạng.';
+    }
+
+    if (loaiAnh === 'goc') {
+      album.trangThai = 'Lỗi đồng bộ';
+    } else {
+      album.trangThaiChinhSua = 'Lỗi đồng bộ';
+    }
+    album.lastError = friendlyMessage;
+    await album.save();
+
+    return {
+      success: false,
+      message: friendlyMessage,
+      code: err.code || 'SYNC_FAILED',
+      album
+    };
+  }
+};
+
+/**
+ * Controller chính xử lý Request đồng bộ từ Quản trị
+ */
 const syncDriveToAlbum = async (req, res) => {
   try {
     const { maHopDong, driveLink, loaiAnh = 'goc' } = req.body;
     if (!maHopDong || !driveLink) {
-      return res.status(400).json({ status: 'error', message: 'Thiếu thông tin maHopDong hoặc driveLink' });
+      return res.status(400).json({ status: 'error', message: 'Thiếu thông tin maHopDong hoặc driveLink.' });
     }
 
-    const isGooglePhotos = driveLink.includes('photos.app.goo.gl') || driveLink.includes('photos.google.com');
-    let folderIdOrLink = driveLink;
-
-    if (!isGooglePhotos) {
-      // Extract folder ID from link
-      const folderMatch = driveLink.match(/folders\/([a-zA-Z0-9-_]+)/);
-      const idMatch = driveLink.match(/id=([a-zA-Z0-9-_]+)/);
-      const dMatch = driveLink.match(/\/d\/([a-zA-Z0-9-_]+)/);
-
-      if (folderMatch) {
-          folderIdOrLink = folderMatch[1];
-      } else if (idMatch) {
-          folderIdOrLink = idMatch[1];
-      } else if (dMatch) {
-          folderIdOrLink = dMatch[1];
-      } else {
-          folderIdOrLink = driveLink;
-      }
-
-      if (!process.env.APPS_SCRIPT_URL) {
-        return res.status(500).json({ status: 'error', message: 'Chưa cấu hình APPS_SCRIPT_URL trong .env' });
-      }
+    const parsedInfo = parseGoogleLink(driveLink);
+    if (!parsedInfo.valid) {
+      return res.status(400).json({ status: 'error', message: parsedInfo.message });
     }
 
-    // Tạo publicLink ngẫu nhiên
+    // Tạo publicLink ngẫu nhiên nếu chưa có
     const publicLink = crypto.randomBytes(8).toString('hex');
 
     // Tìm hoặc tạo album mới
     let album = await ALBUM.findOne({ maHopDong });
     if (!album) {
-      album = new ALBUM({ maHopDong, driveLink, publicLink, trangThai: 'Đang xử lý', danhSachAnh: [] });
+      album = new ALBUM({
+        maHopDong,
+        driveLink,
+        publicLink,
+        trangThai: loaiAnh === 'goc' ? 'Đang xử lý' : 'Đã tạo',
+        trangThaiChinhSua: loaiAnh === 'chinhSua' ? 'Đang xử lý' : 'Chưa đồng bộ',
+        danhSachAnh: [],
+        danhSachAnhChinhSua: []
+      });
     } else {
       if (loaiAnh === 'goc') {
         album.driveLink = driveLink;
@@ -70,143 +340,28 @@ const syncDriveToAlbum = async (req, res) => {
       await HOPDONG.updateOne({ maHopDong }, { linkAnhChinhSua: driveLink });
     }
 
-    // Đợi xử lý đồng bộ xong do luồng mới rất nhanh
-    await processImagesInBackground(album._id, folderIdOrLink, loaiAnh);
+    // Thực hiện đồng bộ
+    const result = await processImagesInBackground(album._id, parsedInfo, loaiAnh);
 
-    // Lấy lại album sau khi đã đồng bộ xong
-    const updatedAlbum = await ALBUM.findById(album._id);
-    
-    // Kiểm tra trạng thái xem có lỗi không
-    const currentStatus = loaiAnh === 'goc' ? updatedAlbum.trangThai : updatedAlbum.trangThaiChinhSua;
-    if (currentStatus === 'Lỗi đồng bộ') {
-      return res.status(400).json({ status: 'error', message: 'Lỗi đồng bộ ảnh. Vui lòng kiểm tra lại đường dẫn chia sẻ!', album: updatedAlbum });
-    }
-
-    const photoCount = loaiAnh === 'goc' ? (updatedAlbum.danhSachAnh?.length || 0) : (updatedAlbum.danhSachAnhChinhSua?.length || 0);
-    return res.status(200).json({ status: 'success', message: `Đã đồng bộ thành công ${photoCount} ảnh từ Google.`, album: updatedAlbum });
-
-  } catch (error) {
-    console.error("Error syncDriveToAlbum:", error);
-    return res.status(500).json({ status: 'error', message: 'Lỗi server khi đồng bộ' });
-  }
-};
-
-const processImagesInBackground = async (albumId, folderIdOrLink, loaiAnh) => {
-  try {
-    const album = await ALBUM.findById(albumId);
-    if (!album) return;
-
-    let files = [];
-    const isGooglePhotos = folderIdOrLink.includes('photos.app.goo.gl') || folderIdOrLink.includes('photos.google.com');
-
-    if (isGooglePhotos) {
-      // Fetch Google Photos shared album
-      const response = await axios.get(folderIdOrLink, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-        }
+    if (!result.success) {
+      return res.status(400).json({
+        status: 'error',
+        message: result.message,
+        code: result.code,
+        album: result.album
       });
-      const html = response.data;
-      // Trích xuất toàn bộ URL chứa /pw/ (Public Web của Google Photos)
-      const regex = /https:\/\/lh3\.googleusercontent\.com\/pw\/[A-Za-z0-9\-_]+/g;
-      const matches = html.match(regex) || [];
-      const uniqueUrls = [...new Set(matches)];
-      const photoUrls = uniqueUrls.filter(url => url.length > 50);
-
-      // Trích xuất tên file nguyên bản từ HTML (các chuỗi kết thúc bằng .ext nằm trong dấu nháy kép và không chứa đường dẫn)
-      const filenameRegex = /"([^"\/\\#\?]+\.(?:jpg|jpeg|png|heic|heif|gif|JPG|JPEG|PNG|HEIC|HEIF|GIF))"/g;
-      const filenames = [];
-      let fMatch;
-      while ((fMatch = filenameRegex.exec(html)) !== null) {
-        filenames.push(fMatch[1]);
-      }
-
-      files = photoUrls.map((url, index) => ({
-        id: url.split('/').pop(),
-        name: filenames[index] || `Photo_${index + 1}.jpg`,
-        urlGoc: `${url}=s0`,
-        urlNen: `${url}=w1000`
-      }));
-    } else {
-      // Call Google Apps Script to get list of files
-      const scriptUrl = process.env.APPS_SCRIPT_URL;
-      const response = await axios.get(`${scriptUrl}?folderId=${folderIdOrLink}`);
-      
-      if (response.data.status !== 'success') {
-        console.error("Apps Script Error:", response.data.message);
-        if (loaiAnh === 'goc') album.trangThai = 'Lỗi đồng bộ';
-        else album.trangThaiChinhSua = 'Lỗi đồng bộ';
-        await album.save();
-        return;
-      }
-
-      const driveFiles = response.data.data || [];
-      files = driveFiles.map(file => ({
-        id: file.id,
-        name: file.name,
-        urlGoc: `https://drive.google.com/uc?id=${file.id}`,
-        urlNen: `https://drive.google.com/thumbnail?id=${file.id}&sz=w1000`
-      }));
     }
 
-    if (files.length === 0) {
-      if (loaiAnh === 'goc') {
-        album.danhSachAnh = [];
-        album.trangThai = 'Hoàn thành';
-      } else {
-        album.danhSachAnhChinhSua = [];
-        album.trangThaiChinhSua = 'Hoàn thành';
-      }
-      await album.save();
-      return;
-    }
-
-    const existingPhotosMap = new Map();
-    const currentList = loaiAnh === 'goc' ? (album.danhSachAnh || []) : (album.danhSachAnhChinhSua || []);
-    currentList.forEach(p => {
-      if (p.idDrive) existingPhotosMap.set(p.idDrive, p);
-      if (p.tenFile) existingPhotosMap.set(p.tenFile, p);
+    return res.status(200).json({
+      status: 'success',
+      message: result.message,
+      count: result.count,
+      album: result.album
     });
 
-    const newPhotos = [];
-
-    for (let file of files) {
-      try {
-        const existing = existingPhotosMap.get(file.id) || existingPhotosMap.get(file.name);
-        newPhotos.push({
-          idDrive: file.id,
-          tenFile: file.name,
-          urlGoc: file.urlGoc,
-          urlNen: file.urlNen,
-          isHearted: existing ? Boolean(existing.isHearted) : false,
-          comments: existing ? (existing.comments || []) : []
-        });
-
-      } catch (err) {
-        console.error(`Error processing file ${file.name}:`, err);
-      }
-    }
-
-    if (loaiAnh === 'goc') {
-      album.danhSachAnh = newPhotos;
-      album.trangThai = 'Hoàn thành';
-    } else {
-      album.danhSachAnhChinhSua = newPhotos;
-      album.trangThaiChinhSua = 'Hoàn thành';
-    }
-    
-    await album.save();
-
   } catch (error) {
-    console.error("Lỗi processImagesInBackground:", error);
-    try {
-      const album = await ALBUM.findById(albumId);
-      if (album) {
-        if (loaiAnh === 'goc') album.trangThai = 'Lỗi đồng bộ';
-        else album.trangThaiChinhSua = 'Lỗi đồng bộ';
-        await album.save();
-      }
-    } catch(e) {}
+    console.error("Error in syncDriveToAlbum controller:", error);
+    return res.status(500).json({ status: 'error', message: 'Lỗi máy chủ khi xử lý đồng bộ ảnh.' });
   }
 };
 
@@ -230,12 +385,22 @@ const getAdminAlbumDetail = async (req, res) => {
       const driveLink = hopDong?.linkAnhGoc || hopDong?.linkAnhChinhSua;
       if (driveLink) {
         const loaiAnh = hopDong?.linkAnhChinhSua ? 'chinhSua' : 'goc';
-        const publicLink = crypto.randomBytes(8).toString('hex');
-        const shareLink = crypto.randomBytes(6).toString('hex');
-        album = new ALBUM({ maHopDong, driveLink, publicLink, shareLink, trangThai: 'Đang xử lý', danhSachAnh: [] });
-        await album.save();
+        const parsed = parseGoogleLink(driveLink);
+        if (parsed.valid) {
+          const publicLink = crypto.randomBytes(8).toString('hex');
+          const shareLink = crypto.randomBytes(6).toString('hex');
+          album = new ALBUM({
+            maHopDong,
+            driveLink,
+            publicLink,
+            shareLink,
+            trangThai: 'Đang xử lý',
+            danhSachAnh: []
+          });
+          await album.save();
 
-        processImagesInBackground(album._id, driveLink, loaiAnh).catch(err => console.error("Lỗi auto sync background:", err));
+          processImagesInBackground(album._id, parsed, loaiAnh).catch(err => console.error("Lỗi auto sync background:", err));
+        }
       }
     }
 

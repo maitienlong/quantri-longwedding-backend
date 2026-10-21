@@ -28,6 +28,9 @@ const cartItemSchema = new mongoose.Schema({
   thanhTien: { type: Number },
 
   // New service parameters
+  soLuongLichChup: { type: Number, default: 0 },
+  soLuongLichMake: { type: Number, default: 0 },
+  soLuot: { type: Number, default: 1 },
   soLuongAnhChinhSua: { type: Number, default: 0 },
   soLuongAnh16x21: { type: Number, default: 0 },
   soLuongAnh20x30: { type: Number, default: 0 },
@@ -188,6 +191,12 @@ hopDongSchema.pre('save', async function (next) {
             }
             if (!item.loaiDichVu) {
               item.loaiDichVu = dichVuGoc.loaiDichVu;
+            }
+            if (item.soLuongLichChup === undefined || item.soLuongLichChup === null) {
+              item.soLuongLichChup = dichVuGoc.soLuongLichChup || 0;
+            }
+            if (item.soLuongLichMake === undefined || item.soLuongLichMake === null) {
+              item.soLuongLichMake = dichVuGoc.soLuongLichMake || 0;
             }
             if (item.soLuongAnhChinhSua === undefined || item.soLuongAnhChinhSua === null) {
               item.soLuongAnhChinhSua = dichVuGoc.soLuongAnhChinhSua || 0;

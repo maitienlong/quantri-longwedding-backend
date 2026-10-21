@@ -45,7 +45,9 @@ async function create(req, res) {
             trangPhucChuReNgayAnHoi: req.body.trangPhucChuReNgayAnHoi,
             trangPhucVayCuoiNgayCuoi: req.body.trangPhucVayCuoiNgayCuoi,
             trangPhucVestChuReNgayCuoi: req.body.trangPhucVestChuReNgayCuoi,
-            hoaCamTay: req.body.hoaCamTay
+            hoaCamTay: req.body.hoaCamTay,
+            soLuongLichChup: Number(req.body.soLuongLichChup) || 0,
+            soLuongLichMake: Number(req.body.soLuongLichMake) || 0
         });
         await dichVu.save();
         console.log("Đã tạo dịch vụ: " + req.body.tenDichVu + " thành công !");
@@ -121,7 +123,10 @@ async function update(req, res) {
             trangPhucChuReNgayAnHoi: trangPhucChuReNgayAnHoi || "",
             trangPhucVayCuoiNgayCuoi: trangPhucVayCuoiNgayCuoi || "",
             trangPhucVestChuReNgayCuoi: trangPhucVestChuReNgayCuoi || "",
-            hoaCamTay: hoaCamTay || ""
+            hoaCamTay: hoaCamTay || "",
+            soLuongLichChup: Number(req.body.soLuongLichChup) || 0,
+            soLuongLichMake: Number(req.body.soLuongLichMake) || 0,
+            ...(req.body.loaiDichVu !== undefined && { loaiDichVu: Number(req.body.loaiDichVu) })
         };
 
         const dichVu = await DichVu.updateOne(

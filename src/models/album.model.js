@@ -27,7 +27,8 @@ const albumSchema = new mongoose.Schema({
   danhSachAnh: [anhSchema],
   danhSachAnhChinhSua: [anhSchema],
   trangThaiChinhSua: { type: String, default: 'Chưa đồng bộ' },
-  chuDe: { type: String }
+  chuDe: { type: String },
+  lastError: { type: String }
 }, {
   timestamps: true
 });
