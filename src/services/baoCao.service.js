@@ -4,30 +4,7 @@ const Payment = require("../models/payment.model");
 const KhachHang = require("../models/khachHang.model");
 const User = require("../models/user.model");
 const { success, error } = require("../utils/response");
-
-// =========================================================================
-// TIMEZONE & DATE HELPER FUNCTIONS (ICT UTC+7)
-// =========================================================================
-
-function getICTComponents(date = new Date()) {
-    const tzOffset = 7 * 60; // ICT is UTC+7 in minutes
-    const localTime = date.getTime() + (date.getTimezoneOffset() * 60000) + (tzOffset * 60000);
-    const ictDate = new Date(localTime);
-    return {
-        year: ictDate.getFullYear(),
-        month: ictDate.getMonth(), // 0-11
-        date: ictDate.getDate(),   // 1-31
-        day: ictDate.getDay(),     // 0 (Sun) - 6 (Sat)
-        hours: ictDate.getHours(),
-        minutes: ictDate.getMinutes()
-    };
-}
-
-function makeICTDate(year, month, date, hours = 0, minutes = 0, seconds = 0, ms = 0) {
-    const d = new Date(Date.UTC(year, month, date, hours, minutes, seconds, ms));
-    d.setUTCHours(d.getUTCHours() - 7);
-    return d;
-}
+const { getICTComponents, makeICTDate } = require("../utils/dateUtils");
 
 function getDayRange(refDate = new Date(), offset = 0) {
     const ict = getICTComponents(refDate);

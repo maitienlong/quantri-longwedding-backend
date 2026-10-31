@@ -1,12 +1,9 @@
 const express = require('express');
 const app = express();
-const sepayRouter = require('./routes/sepay.router');
-const bodyParser = require('body-parser');
-var cors = require('cors')
-const mongoose = require('mongoose')
+var cors = require('cors');
+const mongoose = require('mongoose');
 const path = require('path');
-mongoose.Promise = require('bluebird');
-require('dotenv').config()
+require('dotenv').config();
 
 const port = process.env.PORT;
 
@@ -14,26 +11,31 @@ const port = process.env.PORT;
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const mongoSanitize = require('express-mongo-sanitize');
-const xssClean = require('xss-clean');
 
 // Helmet for security headers (allows cross-origin for images)
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-// Rate limiting (1000 requests per 15 minutes to allow polling)
+// Rate limiting (1500 requests per 15 minutes to allow polling & dashboard operations)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 1000,
+  max: 1500,
   message: "Quá nhiều request từ IP này, vui lòng thử lại sau."
 });
-app.use('/api/', limiter);
-app.use('/auth/', limiter);
+app.use(['/api/', '/auth/', '/hopDong', '/khachHang', '/dichVu', '/chiTieu', '/lichSoanDo', '/trangPhuc', '/vouchers', '/leads', '/baoCao'], limiter);
 
-// Body parser limits (nới rộng lên 50MB cho phép gửi payload ảnh dung lượng lớn)
+// Body parser limits (cho phép gửi payload ảnh dung lượng lớn)
 app.use(express.json({
   limit: "100mb",
   verify: (req, res, buf) => { req.rawBody = buf; }
 }));
 app.use(express.urlencoded({ limit: "100mb", extended: true }));
+
+// Express 5 compatible NoSQL Injection Sanitizer (req.query is getter-only in Express 5)
+app.use((req, res, next) => {
+  if (req.body) mongoSanitize.sanitize(req.body);
+  if (req.params) mongoSanitize.sanitize(req.params);
+  next();
+});
 
 // CORS configuration
 app.use(cors());
@@ -80,6 +82,8 @@ const sepayRoutes = require("./routes/sepay.router");
 const baoCaoRoutes = require("./routes/baoCao.router");
 const donViNhanTienRoutes = require("./routes/donViNhanTien.router");
 const voucherRoutes = require("./routes/voucher.router");
+const trangPhucRoutes = require("./routes/trangPhuc.router");
+const leadRoutes = require("./routes/lead.router");
 
 app.use('/auth', authRoutes);
 app.use('/khachHang', khachHangRoutes);
@@ -108,6 +112,10 @@ app.use('/api/log', logRoutes);
 app.use('/api/visitors', visitorsRoutes);
 app.use('/api/vouchers', voucherRoutes);
 app.use('/vouchers', voucherRoutes);
+app.use('/api/trang-phuc', trangPhucRoutes);
+app.use('/trangPhuc', trangPhucRoutes);
+app.use('/api/leads', leadRoutes);
+app.use('/leads', leadRoutes);
 
 app.get("/", (req, res) => {
   res.send("API is running... " + process.env.VERSION);

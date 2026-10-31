@@ -4,10 +4,15 @@ const albumService = require('../services/album.service');
 const authMiddleware = require('../middleware/auth.middleware');
 
 // API cho Quản trị
-router.post('/sync', albumService.syncDriveToAlbum);
+router.post('/sync', authMiddleware, albumService.syncDriveToAlbum);
 router.get('/admin/list', albumService.getAdminAlbums);
 router.get('/admin/:maHopDong', albumService.getAdminAlbumDetail);
-router.put('/admin/:maHopDong/settings', albumService.updateAlbumSettings);
+router.put('/admin/:maHopDong/settings', authMiddleware, albumService.updateAlbumSettings);
+
+// API cho Cổng Khách Hàng (Client Portal /my-wedding/:maHopDong)
+router.get('/portal/:maHopDong', albumService.getPortalInfo);
+router.post('/portal/:maHopDong/photo-action', albumService.portalPhotoAction);
+router.post('/portal/:maHopDong/complete', albumService.portalCompleteSelection);
 
 // API cho Khách hàng
 router.get('/customer/:publicLink', authMiddleware, albumService.getCustomerAlbum);

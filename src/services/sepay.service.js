@@ -12,10 +12,10 @@ async function getOrCreateConfig() {
     if (!config) {
         config = await SepayConfig.create({
             bankName: process.env.SEPAY_BANK_NAME || "MBBank",
-            accountNumber: process.env.SEPAY_ACCOUNT_NUMBER || "9990187764519",
-            accountName: process.env.SEPAY_ACCOUNT_NAME || "MAI TIEN LONG",
-            merchantId: process.env.SEPAY_MERCHANT_ID || "SP-LIVE-AV3A6B74",
-            webhookSecret: process.env.SEPAY_WEBHOOK_SECRET || "whsec_kY4YMHH5aqMUcrHSEeqj4wQpov6Vhx0N",
+            accountNumber: process.env.SEPAY_ACCOUNT_NUMBER || "",
+            accountName: process.env.SEPAY_ACCOUNT_NAME || "",
+            merchantId: process.env.SEPAY_MERCHANT_ID || "",
+            webhookSecret: process.env.SEPAY_WEBHOOK_SECRET || "",
             apiKey: process.env.SEPAY_API_KEY || "",
             isAutoApprove: true,
             defaultPrefix: "HD"
@@ -178,8 +178,8 @@ async function handleWebhook(req, res) {
             }
         }
 
-        // Fallback for SePay test webhooks without explicit contract code
-        if (!contract && (cleanContent.toLowerCase().includes("test") || cleanContent.toLowerCase().includes("sepay"))) {
+        // Fallback for explicit SePay test webhooks in non-production environment only
+        if (!contract && process.env.NODE_ENV !== 'production' && cleanContent.toLowerCase().includes("test_sepay_webhook")) {
             contract = await HopDong.findOne().sort({ createdAt: -1 });
             if (contract) {
                 console.log(`[SePay Test Webhook] Matched latest contract: ${contract.maHopDong}`);
@@ -215,21 +215,41 @@ async function handleWebhook(req, res) {
 
         const totalPaid = updatedPaidList.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
 
-        const gioHangList = contract.danhSachDichVuDatLich || contract.danhSachDichVu || [];
-        const tongGiaTriForm = gioHangList.reduce((sum, item) => {
+        const gioHangList = contract.gioHang || contract.danhSachDichVuDatLich || contract.danhSachDichVu || [];
+        let tongGiaTriForm = gioHangList.reduce((sum, item) => {
             const p = parseFloat(item.donGia?.toString().replace(/[^0-9.-]+/g, "") || 0);
-            return sum + (p * (Number(item.soLuong) || 1));
+            const sl = Number(item.soLuong) || 1;
+            const giamGiaDV = Number(item.giamGiaDichVu) || 0;
+            return sum + Math.max(0, (p * sl) - giamGiaDV);
         }, 0);
+
+        // Cộng thêm phụ lục phát sinh (Add-ons) nếu có
+        const addonList = contract.phuLucPhatSinh || [];
+        const tongPhatSinh = addonList.reduce((sum, addon) => {
+            const sl = Number(addon.soLuong) || 1;
+            const dg = Number(addon.donGia) || 0;
+            return sum + Math.max(0, sl * dg);
+        }, 0);
+        tongGiaTriForm += tongPhatSinh;
+
+        // Nếu giỏ hàng trống nhưng hợp đồng đã có sẵn tongGiaTri thì giữ nguyên tongGiaTri
+        if (tongGiaTriForm === 0 && Number(contract.thanhToan?.tongGiaTri) > 0) {
+            tongGiaTriForm = Number(contract.thanhToan.tongGiaTri);
+        }
 
         const discountValue = Number(contract.thanhToan?.giamGia) || Number(contract.giamGia) || 0;
         const discountType = Number(contract.thanhToan?.loaiGiamGia) || 0;
+        const voucherGiamGia = Number(contract.thanhToan?.voucherGiamGia) || 0;
         let totalAfterDiscount = tongGiaTriForm;
         if (discountType === 1) {
             totalAfterDiscount = tongGiaTriForm - (tongGiaTriForm * discountValue / 100);
         } else {
             totalAfterDiscount = tongGiaTriForm - discountValue;
         }
-        totalAfterDiscount = Math.max(0, totalAfterDiscount);
+        totalAfterDiscount = Math.max(0, totalAfterDiscount - voucherGiamGia);
+        if (totalAfterDiscount === 0 && Number(contract.thanhToan?.tongGiaTriSauGiam) > 0) {
+            totalAfterDiscount = Number(contract.thanhToan.tongGiaTriSauGiam);
+        }
 
         const khachHangDaThanhToan = totalPaid;
         const conLai = Math.max(0, totalAfterDiscount - khachHangDaThanhToan);
@@ -240,7 +260,7 @@ async function handleWebhook(req, res) {
         } else {
             phanTramDaThanhToan = khachHangDaThanhToan > 0 ? 100 : 0;
         }
-        const trangThaiThanhToan = conLai <= 0 ? "Đã thanh toán đủ" : (khachHangDaThanhToan > 0 ? "Đang thanh toán" : "Chưa thanh toán");
+        const trangThaiThanhToan = conLai <= 0 ? "Đã thanh toán đủ" : (khachHangDaThanhToan > 0 ? `Đã cọc ${phanTramDaThanhToan}%` : "Chưa thanh toán");
 
         await HopDong.findByIdAndUpdate(contract._id, {
             "thanhToan.cacLuotThanhToan": updatedPaidList,

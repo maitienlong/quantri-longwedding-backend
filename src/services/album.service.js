@@ -679,6 +679,202 @@ const convertDriveToBase64 = async (req, res) => {
   }
 };
 
+// =========================================================================
+// CLIENT PORTAL ENDPOINTS (/api/album/portal/:maHopDong)
+// =========================================================================
+
+const getPortalInfo = async (req, res) => {
+  try {
+    const { maHopDong } = req.params;
+    if (!maHopDong) {
+      return res.status(400).json({ status: 'error', message: 'Thiếu mã hợp đồng' });
+    }
+
+    const contract = await HOPDONG.findOne({
+      maHopDong: { $regex: new RegExp(`^${maHopDong.trim()}$`, 'i') }
+    })
+      .populate('khachHang1', 'tenKhachHang soDienThoai')
+      .populate('khachHang2', 'tenKhachHang soDienThoai');
+
+    if (!contract) {
+      return res.status(404).json({ status: 'error', message: 'Không tìm thấy hợp đồng' });
+    }
+
+    let album = await ALBUM.findOne({ maHopDong: contract.maHopDong });
+    if (!album) {
+      const driveLink = contract.linkAnhGoc || contract.linkAnhChinhSua;
+      if (driveLink) {
+        const loaiAnh = contract.linkAnhChinhSua ? 'chinhSua' : 'goc';
+        const parsed = parseGoogleLink(driveLink);
+        if (parsed.valid) {
+          const publicLink = crypto.randomBytes(8).toString('hex');
+          const shareLink = crypto.randomBytes(6).toString('hex');
+          album = new ALBUM({
+            maHopDong: contract.maHopDong,
+            driveLink,
+            publicLink,
+            shareLink,
+            trangThai: 'Đang xử lý',
+            danhSachAnh: []
+          });
+          await album.save();
+          processImagesInBackground(album._id, parsed, loaiAnh).catch(err =>
+            console.error('Lỗi auto sync portal background:', err)
+          );
+        }
+      }
+    }
+
+    // Lấy thông tin ngân hàng SePay để tạo QR thật
+    const SepayConfig = require('../models/sepayConfig.model');
+    const sepayConfig = await SepayConfig.findOne();
+    const bankName = sepayConfig?.bankName || process.env.SEPAY_BANK_NAME || 'MBBank';
+    const accountNumber = sepayConfig?.accountNumber || process.env.SEPAY_ACCOUNT_NUMBER || '';
+    const accountName = sepayConfig?.accountName || process.env.SEPAY_ACCOUNT_NAME || '';
+
+    const tongTien = contract.thanhToan?.tongGiaTriSauGiam ?? contract.thanhToan?.tongGiaTri ?? 0;
+    const daThanhToan = contract.thanhToan?.khachHangDaThanhToan ?? 0;
+    const conLai = Math.max(0, tongTien - daThanhToan);
+    const cleanMa = contract.maHopDong.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+
+    const sepayQrUrl = accountNumber
+      ? `https://qr.sepay.vn/img?bank=${encodeURIComponent(bankName)}&acc=${encodeURIComponent(accountNumber)}&template=qr_only&amount=${conLai}&des=${encodeURIComponent(cleanMa)}`
+      : '';
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        contract: {
+          _id: contract._id,
+          maHopDong: contract.maHopDong,
+          ngayHopDong: contract.ngayHopDong,
+          khachHang1: contract.khachHang1,
+          khachHang2: contract.khachHang2,
+          cacNgay: contract.cacNgay,
+          giaiDoan: contract.giaiDoan,
+          subGiaiDoan: contract.subGiaiDoan,
+          thanhToan: {
+            tongGiaTri: contract.thanhToan?.tongGiaTri || 0,
+            tongGiaTriSauGiam: tongTien,
+            khachHangDaThanhToan: daThanhToan,
+            conLai,
+            phanTramDaThanhToan: contract.thanhToan?.phanTramDaThanhToan || 0,
+            trangThaiThanhToan: contract.thanhToan?.trangThaiThanhToan || 'Chưa thanh toán'
+          },
+          khachHangXacNhanAnh: contract.khachHangXacNhanAnh
+        },
+        album: album || null,
+        paymentQr: {
+          bankName,
+          accountNumber,
+          accountName,
+          transferContent: cleanMa,
+          sepayQrUrl
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Lỗi getPortalInfo:', error);
+    return res.status(500).json({ status: 'error', message: 'Lỗi máy chủ khi tải cổng khách hàng' });
+  }
+};
+
+const portalPhotoAction = async (req, res) => {
+  try {
+    const { maHopDong } = req.params;
+    const { idDrive, action, isHearted, isCover, noiDung, coordinateX, coordinateY } = req.body;
+
+    if (!maHopDong || !idDrive) {
+      return res.status(400).json({ status: 'error', message: 'Thiếu mã hợp đồng hoặc idDrive' });
+    }
+
+    const album = await ALBUM.findOne({
+      maHopDong: { $regex: new RegExp(`^${maHopDong.trim()}$`, 'i') }
+    });
+    if (!album) {
+      return res.status(404).json({ status: 'error', message: 'Album chưa được đồng bộ trên hệ thống' });
+    }
+
+    let photo = album.danhSachAnh.find(p => p.idDrive === idDrive);
+    if (!photo && album.danhSachAnhChinhSua) {
+      photo = album.danhSachAnhChinhSua.find(p => p.idDrive === idDrive);
+    }
+    if (!photo) {
+      return res.status(404).json({ status: 'error', message: 'Không tìm thấy ảnh trong album' });
+    }
+
+    if (action === 'heart') {
+      photo.isHearted = isHearted !== undefined ? Boolean(isHearted) : !photo.isHearted;
+    } else if (action === 'cover') {
+      photo.isCover = isCover !== undefined ? Boolean(isCover) : !photo.isCover;
+      if (photo.isCover) photo.isHearted = true;
+    } else if (action === 'comment' && noiDung) {
+      photo.comments.push({
+        noiDung: String(noiDung).trim(),
+        coordinateX: Number(coordinateX) || 50,
+        coordinateY: Number(coordinateY) || 50,
+        ngayTao: new Date()
+      });
+      photo.isHearted = true;
+    }
+
+    await album.save();
+    return res.status(200).json({
+      status: 'success',
+      message: 'Đã lưu thao tác trên ảnh',
+      photo
+    });
+  } catch (error) {
+    console.error('Lỗi portalPhotoAction:', error);
+    return res.status(500).json({ status: 'error', message: 'Lỗi máy chủ khi lưu thao tác ảnh' });
+  }
+};
+
+const portalCompleteSelection = async (req, res) => {
+  try {
+    const { maHopDong } = req.params;
+    const { ghiChuKhachHang } = req.body || {};
+
+    const contract = await HOPDONG.findOne({
+      maHopDong: { $regex: new RegExp(`^${maHopDong.trim()}$`, 'i') }
+    });
+    if (!contract) {
+      return res.status(404).json({ status: 'error', message: 'Không tìm thấy hợp đồng' });
+    }
+
+    const album = await ALBUM.findOne({ maHopDong: contract.maHopDong });
+    let selectedFiles = [];
+    if (album) {
+      album.khachHangXacNhan = true;
+      album.ngayKhachXacNhan = new Date();
+      await album.save();
+      selectedFiles = (album.danhSachAnh || [])
+        .filter(p => p.isHearted)
+        .map(p => p.tenFile || p.idDrive);
+    }
+
+    const updateFields = {
+      'khachHangXacNhanAnh.daXacNhan': true,
+      'khachHangXacNhanAnh.thoiGianXacNhan': new Date(),
+      'khachHangXacNhanAnh.ghiChuKhachHang': ghiChuKhachHang || `Khách đã chốt ${selectedFiles.length} ảnh qua Cổng Khách Hàng`
+    };
+    if (selectedFiles.length > 0) {
+      updateFields['hauKy.danhSachMaAnhChon'] = selectedFiles;
+    }
+
+    await HOPDONG.updateOne({ _id: contract._id }, { $set: updateFields });
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Đã gửi danh sách ảnh chốt thành công!',
+      selectedCount: selectedFiles.length
+    });
+  } catch (error) {
+    console.error('Lỗi portalCompleteSelection:', error);
+    return res.status(500).json({ status: 'error', message: 'Lỗi máy chủ khi chốt danh sách ảnh' });
+  }
+};
+
 module.exports = {
   syncDriveToAlbum,
   getAdminAlbums,
@@ -691,5 +887,8 @@ module.exports = {
   generateShareLink,
   getSharedAlbum,
   getSharedAlbumSeo,
-  convertDriveToBase64
+  convertDriveToBase64,
+  getPortalInfo,
+  portalPhotoAction,
+  portalCompleteSelection
 };

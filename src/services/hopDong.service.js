@@ -5,29 +5,7 @@ const Payment = require("../models/payment.model");
 const Album = require("../models/album.model");
 const { success, error } = require("../utils/response");
 const { createLog } = require("../utils/logger");
-
-// Helper function to get current date-time string in ICT (+07:00) timezone
-function getICTDateTimeString() {
-    const now = new Date();
-    const tzOffset = 7 * 60; // Offset in minutes for UTC+7 (420 minutes)
-    const localTime = now.getTime() + (now.getTimezoneOffset() * 60000) + (tzOffset * 60000);
-    const localDate = new Date(localTime);
-    
-    const pad = (n) => n.toString().padStart(2, '0');
-    const msPad = (n) => n.toString().padStart(3, '0');
-    
-    return `${localDate.getFullYear()}-${pad(localDate.getMonth() + 1)}-${pad(localDate.getDate())}T${pad(localDate.getHours())}:${pad(localDate.getMinutes())}:${pad(localDate.getSeconds())}.${msPad(localDate.getMilliseconds())}+07:00`;
-}
-
-function formatICTDateTime(date) {
-    if (!date) return "";
-    const d = new Date(date);
-    if (isNaN(d.getTime())) return "";
-    const tzOffset = 7 * 60; // UTC+7 in minutes
-    const ictDate = new Date(d.getTime() + (d.getTimezoneOffset() * 60000) + (tzOffset * 60000));
-    const pad = (n) => n.toString().padStart(2, '0');
-    return `${pad(ictDate.getHours())}:${pad(ictDate.getMinutes())} ngày ${pad(ictDate.getDate())}/${pad(ictDate.getMonth() + 1)}/${ictDate.getFullYear()}`;
-}
+const { getICTDateTimeString, formatICTDateTime } = require("../utils/dateUtils");
 
 // Đảm bảo thông tin thanh toán có đầy đủ phanTramDaThanhToan và trangThaiThanhToan chuẩn xác
 function ensurePaymentProgress(contract) {
@@ -136,7 +114,16 @@ async function create(req, res) {
             thanhToan: req.body.thanhToan || {},
             cacNgay: req.body.cacNgay,
             nguoiPhucVu: req.body.nguoiPhucVu,
-            giaiDoan: req.body.giaiDoan,
+            giaiDoan: req.body.giaiDoan || 1,
+            subGiaiDoan: req.body.subGiaiDoan || 'dang_thuc_hien',
+            lichSuGiaiDoan: [{
+                giaiDoan: req.body.giaiDoan || 1,
+                subGiaiDoan: req.body.subGiaiDoan || 'dang_thuc_hien',
+                thoiGian: new Date(),
+                nguoiThucHien: req.user?.tenNhanVien || req.user?.name || req.user?.username || 'Nhân viên',
+                vaiTro: req.user?.chucVu || req.user?.positon || req.user?.role || 'Admin',
+                ghiChu: 'Khởi tạo hợp đồng mới'
+            }],
             dichVuChinh: req.body.dichVuChinh,
             isSpecialCollection: req.body.isSpecialCollection || false,
             lichTrangDiem: req.body.lichTrangDiem || []
@@ -259,7 +246,7 @@ async function create(req, res) {
 
 async function update(req, res) {
     try {
-        const { maHopDong, gioHang, thanhToan, nguoiPhucVu, giaiDoan, cacNgay, linkAnhGoc, linkAnhChinhSua, danhSachAnhIn, isSpecialCollection, lichTrangDiem, dichVuChinh } = req.body;
+        const { maHopDong, gioHang, thanhToan, nguoiPhucVu, giaiDoan, subGiaiDoan, cacNgay, linkAnhGoc, linkAnhChinhSua, danhSachAnhIn, isSpecialCollection, lichTrangDiem, dichVuChinh } = req.body;
         const hopDong = await HopDong.findOne({ maHopDong });
         if (!hopDong) return error(res, "Không tìm thấy hợp đồng");
 
@@ -292,13 +279,50 @@ async function update(req, res) {
             }
         }
         if (nguoiPhucVu !== undefined) hopDong.nguoiPhucVu = nguoiPhucVu;
+        const prevStage = hopDong.giaiDoan;
+        const prevSubStage = hopDong.subGiaiDoan;
+
         if (giaiDoan !== undefined) {
-            if (Number(giaiDoan) === 4 && hopDong.giaiDoan !== 4) {
+            if (Number(giaiDoan) === 3 && hopDong.giaiDoan !== 3) {
                 if (!hopDong.cacNgay) hopDong.cacNgay = {};
-                hopDong.cacNgay.ngayChuyenInAnh = new Date();
+                if (!hopDong.cacNgay.ngayChuyenInAnh) hopDong.cacNgay.ngayChuyenInAnh = new Date();
             }
-            hopDong.giaiDoan = giaiDoan;
+            hopDong.giaiDoan = Number(giaiDoan);
         }
+        if (subGiaiDoan !== undefined) {
+            hopDong.subGiaiDoan = subGiaiDoan;
+        } else if (giaiDoan !== undefined && Number(giaiDoan) !== prevStage) {
+            // Chuẩn hóa subGiaiDoan khi chuyển giai đoạn chính mà không truyền subGiaiDoan
+            const targetStage = Number(giaiDoan);
+            if (targetStage === 2) hopDong.subGiaiDoan = 'cho_chinh';
+            else if (targetStage === 4) hopDong.subGiaiDoan = 'hoan_thanh';
+            else hopDong.subGiaiDoan = 'dang_thuc_hien';
+        }
+
+        // Ghi lại lịch sử giai đoạn nếu có thay đổi giaiDoan hoặc subGiaiDoan qua hàm update
+        if (hopDong.giaiDoan !== prevStage || hopDong.subGiaiDoan !== prevSubStage) {
+            if (!hopDong.lichSuGiaiDoan) hopDong.lichSuGiaiDoan = [];
+            const stageNames = { 1: "Chụp hình", 2: "Hậu kỳ", 3: "In ảnh", 4: "Hoàn thành" };
+            const subStageNames = {
+                'cho_chinh': "Chờ chỉnh",
+                'dang_chinh': "Đang chỉnh",
+                'cho_khach_duyet': "Khách duyệt",
+                'hoan_thanh': "Hoàn thành",
+                'bao_luu': "Bảo lưu",
+                'huy': "Đã hủy"
+            };
+            const showSub = hopDong.giaiDoan === 2 || ['bao_luu', 'huy'].includes(hopDong.subGiaiDoan);
+            const subText = showSub && subStageNames[hopDong.subGiaiDoan] ? ` (${subStageNames[hopDong.subGiaiDoan]})` : '';
+            hopDong.lichSuGiaiDoan.push({
+                giaiDoan: hopDong.giaiDoan,
+                subGiaiDoan: hopDong.subGiaiDoan,
+                thoiGian: new Date(),
+                nguoiThucHien: req.user?.tenNhanVien || req.user?.fullname || req.user?.name || req.user?.username || 'Nhân viên',
+                vaiTro: req.user?.chucVu || req.user?.positon || req.user?.role || 'Admin',
+                ghiChu: `Cập nhật trạng thái sang: ${stageNames[hopDong.giaiDoan] || hopDong.giaiDoan}${subText}`
+            });
+        }
+
         if (linkAnhGoc !== undefined) hopDong.linkAnhGoc = linkAnhGoc;
         if (linkAnhChinhSua !== undefined) hopDong.linkAnhChinhSua = linkAnhChinhSua;
         if (danhSachAnhIn !== undefined) hopDong.danhSachAnhIn = danhSachAnhIn;
@@ -309,6 +333,10 @@ async function update(req, res) {
 
             const giamGia = incomingThanhToan.giamGia !== undefined ? Number(incomingThanhToan.giamGia) || 0 : (currentThanhToan.giamGia || 0);
             const loaiGiamGia = incomingThanhToan.loaiGiamGia !== undefined ? Number(incomingThanhToan.loaiGiamGia) || 0 : (currentThanhToan.loaiGiamGia || 0);
+            const voucherCode = incomingThanhToan.voucherCode !== undefined ? incomingThanhToan.voucherCode : (currentThanhToan.voucherCode || "");
+            const voucherGiamGia = incomingThanhToan.voucherGiamGia !== undefined ? Number(incomingThanhToan.voucherGiamGia) || 0 : (Number(currentThanhToan.voucherGiamGia) || 0);
+            const voucherId = incomingThanhToan.voucherId !== undefined ? incomingThanhToan.voucherId : currentThanhToan.voucherId;
+            const tongPhatSinh = incomingThanhToan.tongPhatSinh !== undefined ? Number(incomingThanhToan.tongPhatSinh) || 0 : (Number(currentThanhToan.tongPhatSinh) || 0);
             const cacLuotThanhToan = incomingThanhToan.cacLuotThanhToan !== undefined ? incomingThanhToan.cacLuotThanhToan : (currentThanhToan.cacLuotThanhToan || []);
 
             // Recalculate totals from active cart items
@@ -323,7 +351,7 @@ async function update(req, res) {
             } else {
                 tongGiaTriSauGiam = tongGiaTri - giamGia;
             }
-            if (tongGiaTriSauGiam < 0) tongGiaTriSauGiam = 0;
+            tongGiaTriSauGiam = Math.max(0, tongGiaTriSauGiam - voucherGiamGia);
 
             // Recalculate total paid
             const khachHangDaThanhToan = cacLuotThanhToan.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
@@ -345,8 +373,12 @@ async function update(req, res) {
 
             hopDong.thanhToan = {
                 tongGiaTri,
+                tongPhatSinh,
                 giamGia,
                 loaiGiamGia,
+                voucherCode,
+                voucherGiamGia,
+                voucherId,
                 tongGiaTriSauGiam,
                 khachHangDaThanhToan,
                 conLai,
@@ -676,12 +708,29 @@ async function list(req, res) {
         }
 
         // 2. Lọc theo trạng thái
+        const subGiaiDoan = req.body.subGiaiDoan || req.query.subGiaiDoan;
         if (status !== undefined && status !== null && status !== '' && status !== 'all') {
             if (Array.isArray(status)) {
                 query.giaiDoan = { $in: status.map(Number) };
+            } else if (typeof status === 'string' && status.includes('_')) {
+                const parts = status.split('_');
+                query.giaiDoan = Number(parts[0]);
+                const sub = parts.slice(1).join('_');
+                if (query.giaiDoan === 2 && sub === 'cho_chinh') {
+                    query.subGiaiDoan = { $in: ['cho_chinh', 'da_giao_file_goc', 'khach_da_chon_anh'] };
+                } else if (query.giaiDoan === 2 && (sub === 'dang_chinh' || sub === 'dang_hau_ky')) {
+                    query.subGiaiDoan = { $in: ['dang_chinh', 'dang_hau_ky', 'dang_chinh_anh', 'dang_thuc_hien'] };
+                } else if (query.giaiDoan === 2 && (sub === 'cho_khach_duyet' || sub === 'khach_duyet_anh')) {
+                    query.subGiaiDoan = { $in: ['cho_khach_duyet', 'khach_duyet_anh', 'cho_khach_duyet_layout', 'khach_da_duyet_layout'] };
+                } else {
+                    query.subGiaiDoan = sub;
+                }
             } else {
                 query.giaiDoan = Number(status);
             }
+        }
+        if (subGiaiDoan && subGiaiDoan !== 'all' && !query.subGiaiDoan) {
+            query.subGiaiDoan = subGiaiDoan;
         }
 
         // 3. Tìm kiếm theo từ khóa (mã hợp đồng, số điện thoại, tên khách hàng)
@@ -740,7 +789,7 @@ async function list(req, res) {
             })
             .sort(sortQuery);
 
-        const formattedList = hopDong.map(ensurePaymentProgress);
+        const formattedList = hopDong.map(h => sanitizeContractForRole(ensurePaymentProgress(h), req.user));
 
         return success(res, "Tải dữ liệu thành công !", {
             filter: filter || "all",
@@ -814,7 +863,7 @@ async function search(req, res) {
             })
             .sort({ ngayHopDong: -1 });
             
-        const formattedList = hopDong.map(ensurePaymentProgress);
+        const formattedList = hopDong.map(h => sanitizeContractForRole(ensurePaymentProgress(h), req.user));
             
         return success(res, "Tìm kiếm hợp đồng thành công !", {
             count: formattedList.length,
@@ -827,7 +876,7 @@ async function search(req, res) {
 
 async function updateProgress(req, res) {
     try {
-        const { maHopDong, giaiDoan, data, dichVuChinh } = req.body;
+        const { maHopDong, giaiDoan, subGiaiDoan, data, dichVuChinh } = req.body;
         const hopDong = await HopDong.findOne({ maHopDong });
         if (!hopDong) return error(res, "Không tìm thấy hợp đồng");
 
@@ -835,77 +884,120 @@ async function updateProgress(req, res) {
             hopDong.dichVuChinh = Number(dichVuChinh);
         }
 
-        const currentStage = hopDong.giaiDoan;
-        const nextStage = Number(giaiDoan);
+        const nextStage = giaiDoan !== undefined ? Number(giaiDoan) : hopDong.giaiDoan;
+        let nextSubStage = subGiaiDoan !== undefined ? subGiaiDoan : (hopDong.subGiaiDoan || 'dang_thuc_hien');
 
-        if (nextStage < 1 || nextStage > 5) {
-            return error(res, "Giai đoạn không hợp lệ (phải từ 1 đến 5)");
-        }
-
-        // Không cho phép đi lùi giai đoạn
-        if (nextStage < currentStage) {
-            return error(res, `Không thể quay lại giai đoạn trước đó (Hiện tại: ${currentStage}, Yêu cầu chuyển: ${nextStage})`);
-        }
-
-        // Kiểm tra quy tắc chuyển tiếp giai đoạn tuần tự (cho phép bỏ qua 4 để lên thẳng 5)
-        if (nextStage !== currentStage) {
-            const isAnhThe = Number(hopDong.dichVuChinh) === 5;
-            if (isAnhThe) {
-                if (currentStage === 5) {
-                    return error(res, "Hợp đồng đã hoàn thành (5), không thể thay đổi giai đoạn");
-                }
-            } else {
-                if (currentStage === 1 && nextStage !== 2) {
-                    return error(res, "Hợp đồng mới tạo (1) phải chuyển sang giai đoạn Chụp hình (2)");
-                }
-                if (currentStage === 2 && nextStage !== 3) {
-                    return error(res, "Từ giai đoạn Chụp hình (2) phải chuyển sang giai đoạn Hậu kỳ (3)");
-                }
-                if (currentStage === 3 && nextStage !== 4 && nextStage !== 5) {
-                    return error(res, "Từ giai đoạn Hậu kỳ (3) chỉ được chuyển sang In ảnh (4) hoặc Hoàn thành (5)");
-                }
-                if (currentStage === 4 && nextStage !== 5) {
-                    return error(res, "Từ giai đoạn In ảnh (4) chỉ được chuyển sang Hoàn thành (5)");
-                }
-                if (currentStage === 5) {
-                    return error(res, "Hợp đồng đã hoàn thành (5), không thể thay đổi giai đoạn");
+        // Chuẩn hóa subGiaiDoan theo quy tắc: chỉ Giai đoạn 2 có 4 trạng thái phụ (cho_chinh, dang_chinh, cho_khach_duyet, hoan_thanh)
+        if (!['bao_luu', 'huy'].includes(nextSubStage)) {
+            if (nextStage === 1 || nextStage === 3) {
+                nextSubStage = 'dang_thuc_hien';
+            } else if (nextStage === 4) {
+                nextSubStage = 'hoan_thanh';
+            } else if (nextStage === 2) {
+                if (['cho_chinh', 'da_giao_file_goc', 'khach_da_chon_anh'].includes(nextSubStage)) {
+                    nextSubStage = 'cho_chinh';
+                } else if (['cho_khach_duyet', 'khach_duyet_anh', 'cho_khach_duyet_layout', 'khach_da_duyet_layout'].includes(nextSubStage)) {
+                    nextSubStage = 'cho_khach_duyet';
+                } else if (nextSubStage === 'hoan_thanh') {
+                    nextSubStage = 'hoan_thanh';
+                } else if (['dang_chinh', 'dang_hau_ky', 'dang_chinh_anh'].includes(nextSubStage)) {
+                    nextSubStage = 'dang_chinh';
+                } else {
+                    nextSubStage = 'cho_chinh';
                 }
             }
         }
 
-        // Cập nhật dữ liệu tương ứng với từng giai đoạn chuyển tiếp
-        if (nextStage === 2) {
-            if (!data || !data.linkAnhGoc) {
-                return error(res, "Cần cung cấp đường dẫn ảnh gốc cho giai đoạn Chụp hình (2)");
-            }
-            hopDong.linkAnhGoc = data.linkAnhGoc;
+        if (nextStage < 1 || nextStage > 4) {
+            return error(res, "Giai đoạn không hợp lệ (quy trình gồm 4 giai đoạn: 1. Chụp hình, 2. Hậu kỳ, 3. In ảnh, 4. Hoàn thành)");
         }
 
-        if (nextStage === 3) {
-            if (!data || !data.linkAnhChinhSua) {
-                return error(res, "Cần cung cấp đường dẫn ảnh chỉnh sửa cho giai đoạn Hậu kỳ (3)");
+        // Cập nhật dữ liệu tương ứng nếu có
+        if (data) {
+            if (data.linkAnhGoc !== undefined) {
+                hopDong.linkAnhGoc = data.linkAnhGoc;
             }
-            hopDong.linkAnhChinhSua = data.linkAnhChinhSua;
-        }
-
-        if (nextStage === 4) {
-            if (!data || !Array.isArray(data.danhSachAnhIn) || data.danhSachAnhIn.length === 0) {
-                return error(res, "Cần cung cấp danh sách ảnh in cho giai đoạn In ảnh (4)");
+            if (data.linkAnhChinhSua !== undefined) {
+                hopDong.linkAnhChinhSua = data.linkAnhChinhSua;
             }
-            for (let item of data.danhSachAnhIn) {
-                if (!item.kichThuoc || typeof item.soLuong !== 'number' || item.soLuong <= 0) {
-                    return error(res, "Mỗi ảnh in cần có kích thước và số lượng hợp lệ");
+            if (Array.isArray(data.danhSachAnhIn)) {
+                hopDong.danhSachAnhIn = data.danhSachAnhIn;
+                if (!hopDong.cacNgay) hopDong.cacNgay = {};
+                if (!hopDong.cacNgay.ngayChuyenInAnh) {
+                    hopDong.cacNgay.ngayChuyenInAnh = new Date();
                 }
             }
-            hopDong.danhSachAnhIn = data.danhSachAnhIn;
-            if (!hopDong.cacNgay) hopDong.cacNgay = {};
-            hopDong.cacNgay.ngayChuyenInAnh = new Date();
+            if (data.cacNgay) {
+                hopDong.cacNgay = {
+                    ...(hopDong.cacNgay || {}),
+                    ...data.cacNgay
+                };
+            }
+            if (data.nguoiPhucVu) {
+                hopDong.nguoiPhucVu = {
+                    ...(hopDong.nguoiPhucVu || {}),
+                    ...data.nguoiPhucVu
+                };
+            }
+        }
+
+        // Ghi lại lịch sử giai đoạn (Audit trail)
+        if (!hopDong.lichSuGiaiDoan) {
+            hopDong.lichSuGiaiDoan = [];
+        }
+
+        const performerName = req.user?.tenNhanVien || req.user?.name || req.user?.username || 'Nhân viên';
+        const performerRole = req.user?.chucVu || req.user?.positon || req.user?.role || 'Admin';
+        const stageChanged = (hopDong.giaiDoan !== nextStage) || (hopDong.subGiaiDoan !== nextSubStage);
+
+        const stageNames = { 1: "Chụp hình", 2: "Hậu kỳ", 3: "In ảnh", 4: "Hoàn thành" };
+        const subStageNames = { 
+            'dang_thuc_hien': "Đang thực hiện", 
+            'cho_chinh': "Chờ chỉnh",
+            'dang_chinh': "Đang chỉnh",
+            'dang_hau_ky': "Đang chỉnh",
+            'dang_chinh_anh': "Đang chỉnh",
+            'cho_khach_duyet': "Khách duyệt",
+            'khach_duyet_anh': "Khách duyệt",
+            'cho_khach_duyet_layout': "Khách duyệt",
+            'khach_da_duyet_layout': "Khách duyệt",
+            'da_giao_file_goc': "Chờ chỉnh",
+            'khach_da_chon_anh': "Chờ chỉnh",
+            'da_gui_xuong_in': "Đã gửi xưởng in",
+            'studio_da_nhan_hang': "Đã nhận tại Studio",
+            'da_tra_khach': "Đã bàn giao khách",
+            'hoan_thanh': "Hoàn thành",
+            'bao_luu': "Bảo lưu",
+            'huy': "Đã hủy"
+        };
+        const subLabel = (nextStage === 2 || ['bao_luu', 'huy'].includes(nextSubStage))
+            ? ` (${subStageNames[nextSubStage] || nextSubStage})`
+            : '';
+
+        if (stageChanged || (data && (data.linkAnhGoc || data.linkAnhChinhSua || data.danhSachAnhIn || data.ghiChu))) {
+            const defaultNote = `Chuyển tiến trình thủ công sang: ${stageNames[nextStage] || nextStage}${subLabel}`;
+
+            hopDong.lichSuGiaiDoan.push({
+                giaiDoan: nextStage,
+                subGiaiDoan: nextSubStage,
+                thoiGian: new Date(),
+                nguoiThucHien: performerName,
+                vaiTro: performerRole,
+                ghiChu: data?.ghiChu || defaultNote,
+                duLieuKemTheo: {
+                    linkAnhGoc: hopDong.linkAnhGoc,
+                    linkAnhChinhSua: hopDong.linkAnhChinhSua,
+                    soLuongAnhIn: Array.isArray(hopDong.danhSachAnhIn) ? hopDong.danhSachAnhIn.length : 0
+                }
+            });
         }
 
         hopDong.giaiDoan = nextStage;
+        hopDong.subGiaiDoan = nextSubStage;
         await hopDong.save();
 
-        return success(res, "Cập nhật tiến trình hợp đồng thành công !", hopDong);
+        const msg = `Cập nhật tiến trình: ${stageNames[nextStage] || nextStage}${subLabel} thành công!`;
+        return success(res, msg, hopDong);
 
     } catch (err) {
         return error(res, err.message);
@@ -962,7 +1054,468 @@ async function getCustomerContracts(req, res) {
     }
 }
 
+
+async function customerApproveAlbum(req, res) {
+    try {
+        const { maHopDong, daXacNhan, ghiChu } = req.body;
+        const customerId = req.user.id;
+        if (!customerId) return error(res, "Không xác định được khách hàng");
+
+        const hopDong = await HopDong.findOne({ 
+            maHopDong,
+            $or: [
+                { khachHang1: customerId },
+                { khachHang2: customerId }
+            ]
+        });
+
+        if (!hopDong) return error(res, "Không tìm thấy hợp đồng của quý khách");
+
+        const isApproved = daXacNhan !== false;
+        hopDong.khachHangXacNhanAnh = {
+            daXacNhan: isApproved,
+            thoiGianXacNhan: new Date(),
+            ghiChuKhachHang: ghiChu || (isApproved ? "Đã duyệt chốt bản in" : "Yêu cầu chỉnh sửa thêm")
+        };
+
+        if (!hopDong.lichSuGiaiDoan) {
+            hopDong.lichSuGiaiDoan = [];
+        }
+
+        const customerName = req.user?.tenKhachHang || req.user?.name || "Khách Hàng";
+
+        // Không tự động chuyển subGiaiDoan khi khách duyệt; nhân viên sẽ chuyển trạng thái thủ công
+        hopDong.lichSuGiaiDoan.push({
+            giaiDoan: hopDong.giaiDoan,
+            subGiaiDoan: hopDong.subGiaiDoan,
+            thoiGian: new Date(),
+            nguoiThucHien: `Khách hàng (${customerName})`,
+            vaiTro: 'KHACH_HANG',
+            ghiChu: isApproved 
+                ? `Khách hàng đã duyệt chốt bản in trên Website: ${ghiChu || 'Đồng ý chuyển in'}`
+                : `Khách hàng gửi yêu cầu chỉnh sửa lại: ${ghiChu || ''}`,
+            duLieuKemTheo: {
+                linkAnhChinhSua: hopDong.linkAnhChinhSua
+            }
+        });
+
+        await hopDong.save();
+
+        const msg = isApproved 
+            ? "Cảm ơn quý khách! Studio đã ghi nhận xác nhận duyệt ảnh của quý khách." 
+            : "Đã gửi ý kiến chỉnh sửa của quý khách đến studio.";
+
+        return success(res, msg, hopDong);
+    } catch (err) {
+        return error(res, err.message);
+    }
+}
+
+
+// =============================================================
+// ROLE-BASED ACCESS CONTROL & JOB CARD SANITIZATION
+// =============================================================
+function isTechnicianUser(user) {
+    if (!user) return false;
+    const role = (user.positon || user.role || user.chucVu || "").toLowerCase();
+    const isManagerOrAdmin = 
+        role.includes("quản lý") || 
+        role.includes("admin") || 
+        role.includes("quản trị") || 
+        role.includes("kế toán") ||
+        role.includes("sale") ||
+        role.includes("bán hàng") ||
+        user.permission === 1 || 
+        user.username === "along";
+        
+    return !isManagerOrAdmin;
+}
+
+function sanitizeContractForRole(contractDoc, user) {
+    if (!isTechnicianUser(user)) return contractDoc;
+    
+    const sanitized = typeof contractDoc.toObject === 'function' ? contractDoc.toObject() : { ...contractDoc };
+    
+    // Ẩn chi tiết tài chính đối với kỹ thuật viên (Chụp, Makeup, Photoshop)
+    if (sanitized.thanhToan) {
+        sanitized.thanhToan = {
+            trangThaiThanhToan: sanitized.thanhToan.trangThaiThanhToan,
+            tongGiaTri: undefined,
+            giamGia: undefined,
+            tongGiaTriSauGiam: undefined,
+            khachHangDaThanhToan: undefined,
+            conLai: undefined,
+            cacLuotThanhToan: []
+        };
+    }
+    
+    // Ẩn đơn giá trong giỏ hàng
+    if (Array.isArray(sanitized.gioHang)) {
+        sanitized.gioHang = sanitized.gioHang.map(item => {
+            const itemObj = typeof item.toObject === 'function' ? item.toObject() : { ...item };
+            delete itemObj.donGia;
+            delete itemObj.thanhTien;
+            delete itemObj.giamGiaDichVu;
+            return itemObj;
+        });
+    }
+
+    // Ẩn đơn giá trong phụ lục phát sinh
+    if (Array.isArray(sanitized.phuLucPhatSinh)) {
+        sanitized.phuLucPhatSinh = sanitized.phuLucPhatSinh.map(item => {
+            const itemObj = typeof item.toObject === 'function' ? item.toObject() : { ...item };
+            delete itemObj.donGia;
+            delete itemObj.thanhTien;
+            return itemObj;
+        });
+    }
+
+    sanitized.cacLuotChi = [];
+
+    // Kỹ thuật viên chỉ thấy hoa hồng của chính mình
+    if (Array.isArray(sanitized.hoaHongEkip)) {
+        sanitized.hoaHongEkip = sanitized.hoaHongEkip.filter(h => 
+            h.tenNhanVien === user.fullname || (user._id && h.nhanVienId && h.nhanVienId.toString() === user._id.toString())
+        );
+    }
+    
+    return sanitized;
+}
+
+// =============================================================
+// CẬP NHẬT HẬU KỲ & IN ẤN (POST-PRODUCTION WORKFLOW - MANUAL STATUS)
+// =============================================================
+async function updatePostProduction(req, res) {
+    try {
+        const {
+            maHopDong,
+            contractId,
+            subGiaiDoan,
+            hauKy: nestedHauKy,
+            linkAnhGoc: topLinkAnhGoc,
+            linkAnhChon: topLinkAnhChon,
+            danhSachMaAnhChon: topDanhSachMaAnhChon,
+            linkLayoutMaket: topLinkLayoutMaket,
+            layoutNote: topLayoutNote,
+            thongTinInAn: topThongTinInAn
+        } = req.body;
+
+        if (!maHopDong && !contractId) return error(res, "Thiếu mã hợp đồng hoặc ID hợp đồng");
+
+        const hopDong = maHopDong
+            ? await HopDong.findOne({ maHopDong })
+            : await HopDong.findById(contractId);
+        if (!hopDong) return error(res, "Không tìm thấy hợp đồng");
+
+        if (!hopDong.hauKy) hopDong.hauKy = {};
+
+        const linkAnhGoc = topLinkAnhGoc !== undefined ? topLinkAnhGoc : nestedHauKy?.linkAnhGoc;
+        const linkAnhChon = topLinkAnhChon !== undefined ? topLinkAnhChon : nestedHauKy?.linkAnhChon;
+        const danhSachMaAnhChon = topDanhSachMaAnhChon !== undefined ? topDanhSachMaAnhChon : nestedHauKy?.danhSachMaAnhChon;
+        const linkLayoutMaket = topLinkLayoutMaket !== undefined ? topLinkLayoutMaket : nestedHauKy?.linkLayoutMaket;
+        const layoutNote = topLayoutNote !== undefined ? topLayoutNote : nestedHauKy?.layoutNote;
+        const thongTinInAn = topThongTinInAn !== undefined ? topThongTinInAn : nestedHauKy?.thongTinInAn;
+
+        if (subGiaiDoan) hopDong.subGiaiDoan = subGiaiDoan;
+        if (linkAnhGoc !== undefined) {
+            hopDong.hauKy.linkAnhGoc = linkAnhGoc;
+            hopDong.linkAnhGoc = linkAnhGoc;
+        }
+        if (linkAnhChon !== undefined) hopDong.hauKy.linkAnhChon = linkAnhChon;
+        if (Array.isArray(danhSachMaAnhChon)) hopDong.hauKy.danhSachMaAnhChon = danhSachMaAnhChon;
+
+        // Lưu vết versioning layout nếu có link maket mới
+        if (linkLayoutMaket && linkLayoutMaket !== hopDong.hauKy.linkLayoutMaket) {
+            hopDong.hauKy.linkLayoutMaket = linkLayoutMaket;
+            hopDong.hauKy.soLanSuaLayout = (hopDong.hauKy.soLanSuaLayout || 0) + 1;
+            if (!hopDong.hauKy.layoutHistory) hopDong.hauKy.layoutHistory = [];
+            hopDong.hauKy.layoutHistory.push({
+                version: hopDong.hauKy.soLanSuaLayout,
+                link: linkLayoutMaket,
+                note: layoutNote || "Cập nhật layout",
+                createdAt: new Date()
+            });
+        }
+
+        if (thongTinInAn) {
+            hopDong.hauKy.thongTinInAn = {
+                ...hopDong.hauKy.thongTinInAn,
+                ...thongTinInAn
+            };
+        }
+
+        // Ghi lại lịch sử giai đoạn
+        hopDong.lichSuGiaiDoan.push({
+            giaiDoan: hopDong.giaiDoan,
+            subGiaiDoan: hopDong.subGiaiDoan,
+            thoiGian: new Date(),
+            nguoiThucHien: req.user?.fullname || req.user?.tenNhanVien || "Hậu kỳ",
+            vaiTro: req.user?.positon || req.user?.chucVu || "Photoshop",
+            ghiChu: layoutNote || "Cập nhật thông tin hậu kỳ/in ấn"
+        });
+
+        await hopDong.save();
+        return success(res, "Cập nhật thông tin hậu kỳ thành công", hopDong.hauKy);
+    } catch (err) {
+        return error(res, err.message);
+    }
+}
+
+// =============================================================
+// THÊM PHỤ LỤC PHÁT SINH (ADD-ON / UPSELL SAU KÝ)
+// =============================================================
+async function addAddonItem(req, res) {
+    try {
+        const { maHopDong, contractId, item } = req.body;
+        const tenDichVu = req.body.tenDichVu || item?.tenDichVu;
+        const donGia = req.body.donGia !== undefined ? req.body.donGia : item?.donGia;
+        const soLuong = req.body.soLuong !== undefined ? req.body.soLuong : item?.soLuong;
+        const ghiChu = req.body.ghiChu !== undefined ? req.body.ghiChu : item?.ghiChu;
+
+        if ((!maHopDong && !contractId) || !tenDichVu) {
+            return error(res, "Thiếu mã hợp đồng hoặc tên dịch vụ phát sinh");
+        }
+
+        const hopDong = maHopDong
+            ? await HopDong.findOne({ maHopDong })
+            : await HopDong.findById(contractId);
+        if (!hopDong) return error(res, "Không tìm thấy hợp đồng");
+
+        if (!hopDong.phuLucPhatSinh) hopDong.phuLucPhatSinh = [];
+
+        const sl = Number(soLuong) || 1;
+        const dg = Number(donGia) || 0;
+        const thanhTien = sl * dg;
+
+        const newAddon = {
+            id: 'ADDON-' + Date.now().toString().slice(-6),
+            tenDichVu,
+            donGia: dg,
+            soLuong: sl,
+            thanhTien,
+            ghiChu: ghiChu || "",
+            ngayTao: new Date(),
+            nguoiTao: req.user?.fullname || "Sale",
+            isAddon: true
+        };
+
+        hopDong.phuLucPhatSinh.push(newAddon);
+
+        // Ghi Audit Log bắt buộc
+        hopDong.auditLog.push({
+            action: "Thêm phụ lục phát sinh (Upsell)",
+            reason: ghiChu || ("Thêm " + tenDichVu + " (+" + thanhTien.toLocaleString('vi-VN') + " đ)"),
+            newValue: newAddon,
+            performedBy: req.user?.fullname || "Nhân viên",
+            role: req.user?.positon || "Sale",
+            timestamp: new Date()
+        });
+
+        await hopDong.save();
+        return success(res, "Đã thêm phụ lục phát sinh thành công", hopDong);
+    } catch (err) {
+        return error(res, err.message);
+    }
+}
+
+// =============================================================
+// CẬP NHẬT TÀI CHÍNH / HỦY / BẢO LƯU KÈM AUDIT LOG BẮT BUỘC
+// =============================================================
+async function updateWithAudit(req, res) {
+    try {
+        const { maHopDong, reason, action, newStatus, giamGia, loaiGiamGia } = req.body;
+        if (!maHopDong) return error(res, "Thiếu mã hợp đồng");
+        if (!reason || reason.trim().length < 5) {
+            return error(res, "Bắt buộc phải nhập lý do cụ thể (tối thiểu 5 ký tự) cho thao tác này!");
+        }
+
+        const hopDong = await HopDong.findOne({ maHopDong });
+        if (!hopDong) return error(res, "Không tìm thấy hợp đồng");
+
+        const oldValue = {
+            giaiDoan: hopDong.giaiDoan,
+            subGiaiDoan: hopDong.subGiaiDoan,
+            thanhToan: hopDong.thanhToan
+        };
+
+        if (newStatus) {
+            if (newStatus === 'bao_luu') {
+                hopDong.subGiaiDoan = 'bao_luu';
+            } else if (newStatus === 'huy') {
+                hopDong.subGiaiDoan = 'huy';
+            } else if (typeof newStatus === 'number') {
+                hopDong.giaiDoan = newStatus;
+            }
+        }
+
+        if (giamGia !== undefined) {
+            hopDong.thanhToan.giamGia = Number(giamGia) || 0;
+            if (loaiGiamGia !== undefined) hopDong.thanhToan.loaiGiamGia = Number(loaiGiamGia);
+        }
+
+        hopDong.auditLog.push({
+            action: action || "Cập nhật tài chính / trạng thái hợp đồng",
+            reason: reason.trim(),
+            oldValue,
+            newValue: {
+                giaiDoan: hopDong.giaiDoan,
+                subGiaiDoan: hopDong.subGiaiDoan,
+                thanhToan: hopDong.thanhToan
+            },
+            performedBy: req.user?.fullname || "Quản lý",
+            role: req.user?.positon || "Admin",
+            timestamp: new Date()
+        });
+
+        await hopDong.save();
+        return success(res, "Cập nhật và ghi vết thành công", hopDong);
+    } catch (err) {
+        return error(res, err.message);
+    }
+}
+
+// =============================================================
+// HỆ THỐNG CẢNH BÁO TỰ ĐỘNG & NHẮC LỊCH (T-3, T-1, QUÁ HẠN)
+// =============================================================
+async function getReminders(req, res) {
+    try {
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+        const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+
+        const tomorrowStart = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000);
+        const tomorrowEnd = new Date(endOfToday.getTime() + 24 * 60 * 60 * 1000);
+
+        const t3End = new Date(endOfToday.getTime() + 3 * 24 * 60 * 60 * 1000);
+
+        // 1. Chụp hình ngày mai (T-1)
+        const upcomingShoots = await HopDong.find({
+            "cacNgay.ngayChup": { $gte: tomorrowStart, $lte: tomorrowEnd },
+            subGiaiDoan: { $nin: ['bao_luu', 'huy', 'hoan_thanh'] }
+        }).populate('khachHang1', 'tenKhachHang soDienThoai diaChi');
+
+        // 2. Trang điểm tiệc cưới / ăn hỏi ngày mai (T-1)
+        const upcomingMakeups = await HopDong.find({
+            $or: [
+                { "cacNgay.ngayAnHoi": { $gte: tomorrowStart, $lte: tomorrowEnd } },
+                { "cacNgay.ngayCuoi": { $gte: tomorrowStart, $lte: tomorrowEnd } },
+                { "lichTrangDiem.ngayTrangDiem": { $gte: tomorrowStart, $lte: tomorrowEnd } }
+            ],
+            subGiaiDoan: { $nin: ['bao_luu', 'huy', 'hoan_thanh'] }
+        }).populate('khachHang1', 'tenKhachHang soDienThoai diaChi');
+
+        // 3. Khách hẹn lấy váy cưới / áo dài trong 3 ngày tới (T-3)
+        const upcomingDressPickups = await HopDong.find({
+            "trangPhucGiu": {
+                $elemMatch: {
+                    ngayHenLay: { $gte: startOfToday, $lte: t3End },
+                    trangThai: 'GIU_CHO'
+                }
+            }
+        }).populate('khachHang1', 'tenKhachHang soDienThoai');
+
+        // 4. Quá hạn trả đồ cưới về studio (Đang mượn mà quá ngày hẹn trả)
+        const overdueDressReturns = await HopDong.find({
+            "trangPhucGiu": {
+                $elemMatch: {
+                    ngayHenTra: { $lt: startOfToday },
+                    trangThai: 'DANG_MUON'
+                }
+            }
+        }).populate('khachHang1', 'tenKhachHang soDienThoai');
+
+        // 5. Hậu kỳ quá hạn trả ảnh cho khách
+        const overduePostProductions = await HopDong.find({
+            "cacNgay.ngayTraAnh": { $lt: startOfToday },
+            subGiaiDoan: { $nin: ['da_tra_khach', 'hoan_thanh', 'bao_luu', 'huy'] }
+        }).populate('khachHang1', 'tenKhachHang soDienThoai');
+
+        // 6. Khách vừa xác nhận chọn ảnh trên Cổng Khách Hàng (chờ nhân viên xử lý & chuyển trạng thái thủ công)
+        const customerApprovedAlbums = await HopDong.find({
+            "khachHangXacNhanAnh.daXacNhan": true,
+            giaiDoan: { $in: [1, 2] },
+            subGiaiDoan: { $nin: ['hoan_thanh', 'bao_luu', 'huy'] }
+        }).populate('khachHang1', 'tenKhachHang soDienThoai');
+
+        const mappedShoots = upcomingShoots.map(h => ({
+            maHopDong: h.maHopDong,
+            tenKhachHang: h.khachHang1?.tenKhachHang,
+            soDienThoai: h.khachHang1?.soDienThoai,
+            gioChup: h.cacNgay?.gioChup,
+            diaDiem: h.cacNgay?.diaDiemChup,
+            thoChup: h.nguoiPhucVu?.thoChupHinh,
+            thoMake: h.nguoiPhucVu?.thoMakeUp
+        }));
+
+        const mappedMakeups = upcomingMakeups.map(h => ({
+            maHopDong: h.maHopDong,
+            tenKhachHang: h.khachHang1?.tenKhachHang,
+            soDienThoai: h.khachHang1?.soDienThoai,
+            ngayAnHoi: h.cacNgay?.ngayAnHoi,
+            ngayCuoi: h.cacNgay?.ngayCuoi,
+            thoMake: h.nguoiPhucVu?.thoMakeUp
+        }));
+
+        const mappedPickups = upcomingDressPickups.map(h => ({
+            maHopDong: h.maHopDong,
+            tenKhachHang: h.khachHang1?.tenKhachHang,
+            soDienThoai: h.khachHang1?.soDienThoai,
+            items: (h.trangPhucGiu || []).filter(i => i.trangThai === 'GIU_CHO' && new Date(i.ngayHenLay) <= t3End)
+        }));
+
+        const mappedOverdueDresses = overdueDressReturns.map(h => ({
+            maHopDong: h.maHopDong,
+            tenKhachHang: h.khachHang1?.tenKhachHang,
+            soDienThoai: h.khachHang1?.soDienThoai,
+            items: (h.trangPhucGiu || []).filter(i => i.trangThai === 'DANG_MUON' && new Date(i.ngayHenTra) < startOfToday)
+        }));
+
+        const mappedOverduePhotos = overduePostProductions.map(h => ({
+            maHopDong: h.maHopDong,
+            tenKhachHang: h.khachHang1?.tenKhachHang,
+            soDienThoai: h.khachHang1?.soDienThoai,
+            ngayTraAnh: h.cacNgay?.ngayTraAnh,
+            subGiaiDoan: h.subGiaiDoan,
+            thoChinhAnh: h.nguoiPhucVu?.thoChinhAnh
+        }));
+
+        const mappedCustomerApproved = customerApprovedAlbums.map(h => ({
+            maHopDong: h.maHopDong,
+            tenKhachHang: h.khachHang1?.tenKhachHang,
+            soDienThoai: h.khachHang1?.soDienThoai,
+            thoiGianXacNhan: h.khachHangXacNhanAnh?.thoiGianXacNhan,
+            ghiChu: h.khachHangXacNhanAnh?.ghiChuKhachHang,
+            soAnhChon: (h.hauKy?.danhSachMaAnhChon || []).length
+        }));
+
+        const totalCount =
+            mappedShoots.length +
+            mappedMakeups.length +
+            mappedPickups.length +
+            mappedOverdueDresses.length +
+            mappedOverduePhotos.length +
+            mappedCustomerApproved.length;
+
+        return success(res, "Tải danh sách nhắc nhở và cảnh báo thành công", {
+            totalCount,
+            upcomingShoots: mappedShoots,
+            upcomingMakeups: mappedMakeups,
+            upcomingDressPickups: mappedPickups,
+            overdueDressReturns: mappedOverdueDresses,
+            overduePostProductions: mappedOverduePhotos,
+            customerApprovedAlbums: mappedCustomerApproved
+        });
+    } catch (err) {
+        return error(res, err.message);
+    }
+}
+
+
 module.exports = {
+    updatePostProduction,
+    addAddonItem,
+    updateWithAudit,
+    getReminders,
     create,
     update,
     pay,
@@ -970,5 +1523,6 @@ module.exports = {
     list,
     search,
     updateProgress,
-    getCustomerContracts
+    getCustomerContracts,
+    customerApproveAlbum
 };

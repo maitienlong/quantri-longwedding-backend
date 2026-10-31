@@ -180,14 +180,12 @@ async function loginUser(req, res) {
         }
 
         // 3. Tạo JWT token
-        // - Nếu ghi nhớ đăng nhập trên thiết bị cho phép (remember = true): Token không giới hạn (36500d ~ 100 năm)
-        // - Nếu đăng nhập ở thiết bị hoặc phiên khác (không ghi nhớ): Vẫn giới hạn đúng 1 ngày (1d)
         const isRemember = req.body?.remember !== false && req.body?.remember !== "false";
         const signOptions = isRemember ? { expiresIn: "36500d" } : { expiresIn: "365d" };
 
         const token = jwt.sign(
-            { username: user.username, fullname: user.fullname, isRemember }, // payload
-            process.env.JWT_SECRET, // secret key
+            { username: user.username, fullname: user.fullname, isRemember },
+            process.env.JWT_SECRET,
             signOptions
         );
 
@@ -214,8 +212,45 @@ async function loginUser(req, res) {
     }
 }
 
+async function refreshToken(req, res) {
+    try {
+        const authHeader = req.headers["authorization"];
+        const oldToken = req.body?.token || (authHeader && authHeader.split(" ")[1]);
+        if (!oldToken) {
+            return error(res, "Không tìm thấy token để gia hạn", 401);
+        }
+
+        const decoded = jwt.verify(oldToken, process.env.JWT_SECRET, { ignoreExpiration: true });
+        if (!decoded || !decoded.username) {
+            return error(res, "Token không hợp lệ", 401);
+        }
+
+        const user = await User.findOne({ username: decoded.username });
+        if (!user) {
+            return error(res, "Tài khoản không còn tồn tại trên hệ thống", 401);
+        }
+
+        const newToken = jwt.sign(
+            { username: user.username, fullname: user.fullname, isRemember: true },
+            process.env.JWT_SECRET,
+            { expiresIn: "36500d" }
+        );
+
+        return success(res, "Gia hạn phiên đăng nhập thành công", {
+            token: newToken,
+            username: user.username,
+            fullname: user.fullname,
+            positon: user.positon,
+            permission: user.permission
+        });
+    } catch (err) {
+        return error(res, "Không thể gia hạn phiên đăng nhập: " + err.message, 401);
+    }
+}
+
 module.exports = {
     loginUser,
+    refreshToken,
     createUser,
     updateUser,
     removeUser,

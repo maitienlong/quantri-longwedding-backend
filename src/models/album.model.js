@@ -6,9 +6,12 @@ const anhSchema = new mongoose.Schema({
   urlGoc: { type: String, required: true }, // Có thể là link proxy qua server hoặc link S3/Local
   urlNen: { type: String, required: true }, // Link ảnh đã nén để hiển thị nhanh
   isHearted: { type: Boolean, default: false }, // Đã chọn hay chưa
+  isCover: { type: Boolean, default: false }, // Đánh dấu ảnh phóng cổng
   comments: [
     {
       noiDung: { type: String },
+      coordinateX: { type: Number },
+      coordinateY: { type: Number },
       ngayTao: { type: Date, default: Date.now },
     }
   ]

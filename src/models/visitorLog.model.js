@@ -16,4 +16,7 @@ const visitorLogSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
+visitorLogSchema.index({ lastSeen: -1 });
+visitorLogSchema.index({ country: 1 });
+
 module.exports = mongoose.model('VisitorLog', visitorLogSchema);

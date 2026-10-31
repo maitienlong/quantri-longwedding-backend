@@ -7,9 +7,12 @@ const activeVisitors = new Map();
 
 const BlockedIP = require('../models/blockedIp.model');
 const VisitorLog = require('../models/visitorLog.model');
+const authMiddleware = require('../middleware/auth.middleware');
+const checkRole = require('../middleware/role.middleware');
 
-// In-memory cache for IP locations to avoid redundant API calls
+// In-memory cache for IP locations & DB write throttling to avoid redundant DB/API calls
 const ipGeoCache = new Map();
+const lastDbWriteMap = new Map();
 
 const isPrivateIp = (ip) => {
     if (!ip) return true;
@@ -110,41 +113,45 @@ router.post('/heartbeat', async (req, res) => {
             }
         });
 
-        // Database log
-        try {
-            let log = await VisitorLog.findOne({ ip });
-            if (log) {
-                log.visitCount = (log.visitCount || 0) + 1;
-                log.lastSeen = new Date();
-                log.device = device || log.device;
-                log.page = page || log.page;
-                if (userDisplayName && userDisplayName !== 'Khách vãng lai') {
-                    log.username = userDisplayName;
+        // Database log (throttled: only write to MongoDB once every 60s per IP to reduce I/O load)
+        const lastDbWrite = lastDbWriteMap.get(ip) || 0;
+        if (now - lastDbWrite > 60000) {
+            lastDbWriteMap.set(ip, now);
+            try {
+                let log = await VisitorLog.findOne({ ip });
+                if (log) {
+                    log.visitCount = (log.visitCount || 0) + 1;
+                    log.lastSeen = new Date();
+                    log.device = device || log.device;
+                    log.page = page || log.page;
+                    if (userDisplayName && userDisplayName !== 'Khách vãng lai') {
+                        log.username = userDisplayName;
+                    }
+                    log.city = geo.city;
+                    log.country = geo.country;
+                    log.countryCode = geo.countryCode;
+                    log.lat = geo.lat;
+                    log.lng = geo.lng;
+                    await log.save();
+                } else {
+                    await VisitorLog.create({
+                        ip,
+                        sessionId,
+                        device: device || req.headers['user-agent'] || 'Unknown Device',
+                        page: page || '/',
+                        username: userDisplayName,
+                        city: geo.city,
+                        country: geo.country,
+                        countryCode: geo.countryCode,
+                        lat: geo.lat,
+                        lng: geo.lng,
+                        visitCount: 1,
+                        lastSeen: new Date()
+                    });
                 }
-                log.city = geo.city;
-                log.country = geo.country;
-                log.countryCode = geo.countryCode;
-                log.lat = geo.lat;
-                log.lng = geo.lng;
-                await log.save();
-            } else {
-                await VisitorLog.create({
-                    ip,
-                    sessionId,
-                    device: device || req.headers['user-agent'] || 'Unknown Device',
-                    page: page || '/',
-                    username: userDisplayName,
-                    city: geo.city,
-                    country: geo.country,
-                    countryCode: geo.countryCode,
-                    lat: geo.lat,
-                    lng: geo.lng,
-                    visitCount: 1,
-                    lastSeen: new Date()
-                });
+            } catch (dbErr) {
+                console.error("Error saving VisitorLog:", dbErr.message);
             }
-        } catch (dbErr) {
-            console.error("Error saving VisitorLog:", dbErr.message);
         }
         
         res.json({ status: 'success' });
@@ -153,27 +160,41 @@ router.post('/heartbeat', async (req, res) => {
     }
 });
 
-// Endpoint for stats summary
+// Endpoint for stats summary (Optimized with MongoDB Aggregation)
 router.get('/stats', async (req, res) => {
     try {
-        const totalLogs = await VisitorLog.find();
-        const totalVisits = totalLogs.reduce((acc, item) => acc + (item.visitCount || 1), 0);
-        const uniqueIpsCount = totalLogs.length;
-
         const startOfToday = new Date();
         startOfToday.setHours(0, 0, 0, 0);
-        const todayVisits = await VisitorLog.countDocuments({ lastSeen: { $gte: startOfToday } });
 
-        const countryMap = {};
-        totalLogs.forEach(item => {
-            const key = item.country || 'Việt Nam';
-            countryMap[key] = (countryMap[key] || 0) + (item.visitCount || 1);
-        });
+        const [summaryAgg, todayVisits, countryAgg] = await Promise.all([
+            VisitorLog.aggregate([
+                {
+                    $group: {
+                        _id: null,
+                        totalVisits: { $sum: { $ifNull: ['$visitCount', 1] } },
+                        uniqueIpsCount: { $sum: 1 }
+                    }
+                }
+            ]),
+            VisitorLog.countDocuments({ lastSeen: { $gte: startOfToday } }),
+            VisitorLog.aggregate([
+                {
+                    $group: {
+                        _id: { $ifNull: ['$country', 'Việt Nam'] },
+                        count: { $sum: { $ifNull: ['$visitCount', 1] } }
+                    }
+                },
+                { $sort: { count: -1 } },
+                { $limit: 5 }
+            ])
+        ]);
 
-        const topCountries = Object.entries(countryMap)
-            .map(([country, count]) => ({ country, count }))
-            .sort((a, b) => b.count - a.count)
-            .slice(0, 5);
+        const totalVisits = summaryAgg[0]?.totalVisits || 0;
+        const uniqueIpsCount = summaryAgg[0]?.uniqueIpsCount || 0;
+        const topCountries = countryAgg.map(item => ({
+            country: item._id || 'Việt Nam',
+            count: item.count
+        }));
 
         res.json({
             status: 'success',
@@ -271,8 +292,8 @@ router.get('/blocked', async (req, res) => {
     }
 });
 
-// Block an IP
-router.post('/block', async (req, res) => {
+// Block an IP (Chỉ Quản lý được phép chặn IP)
+router.post('/block', authMiddleware, checkRole(["Quản lý"]), async (req, res) => {
     try {
         const { ip } = req.body;
         if (!ip) return res.status(400).json({ status: 'error', message: 'Missing IP address' });
@@ -295,8 +316,8 @@ router.post('/block', async (req, res) => {
     }
 });
 
-// Unblock an IP
-router.post('/unblock', async (req, res) => {
+// Unblock an IP (Chỉ Quản lý được phép gỡ chặn IP)
+router.post('/unblock', authMiddleware, checkRole(["Quản lý"]), async (req, res) => {
     try {
         const { ip } = req.body;
         if (!ip) return res.status(400).json({ status: 'error', message: 'Missing IP address' });

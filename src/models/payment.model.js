@@ -14,4 +14,8 @@ const paymentSchema = new mongoose.Schema({
     timestamps: true
 });
 
+paymentSchema.index({ date: -1 });
+paymentSchema.index({ maHopDong: 1 });
+paymentSchema.index({ hopDongId: 1 });
+
 module.exports = mongoose.model("payment", paymentSchema);

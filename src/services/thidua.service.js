@@ -2,27 +2,7 @@ const User = require("../models/user.model");
 const HopDong = require("../models/hopDong.model");
 const StoreTarget = require("../models/storeTarget.model");
 const { success, error } = require("../utils/response");
-
-// Helper get ICT date components
-function getICTComponents(date = new Date()) {
-    const tzOffset = 7 * 60; // ICT is UTC+7
-    const localTime = date.getTime() + (date.getTimezoneOffset() * 60000) + (tzOffset * 60000);
-    const ictDate = new Date(localTime);
-    return {
-        year: ictDate.getFullYear(),
-        month: ictDate.getMonth(), // 0-11
-        date: ictDate.getDate(),
-        day: ictDate.getDay(),
-        hours: ictDate.getHours(),
-        minutes: ictDate.getMinutes()
-    };
-}
-
-function makeICTDate(year, month, date, hours = 0, minutes = 0, seconds = 0, ms = 0) {
-    const d = new Date(Date.UTC(year, month, date, hours, minutes, seconds, ms));
-    d.setUTCHours(d.getUTCHours() - 7);
-    return d;
-}
+const { getICTComponents, makeICTDate } = require("../utils/dateUtils");
 
 // Calculate growth percentage
 function calcGrowth(current = 0, previous = 0) {

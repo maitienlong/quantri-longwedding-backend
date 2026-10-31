@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 const DICHVU = require("./dichVu.model");
-const HOPDONG = require("./dichVu.model");
+const HOPDONG = require("./hopDong.model");
 
 const cartItemSchema = new mongoose.Schema({
   dichVu: {

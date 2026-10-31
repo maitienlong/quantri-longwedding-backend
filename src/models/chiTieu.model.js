@@ -13,4 +13,7 @@ const chiTieuSchema = new mongoose.Schema({
     timestamps: true
 });
 
+chiTieuSchema.index({ date: -1 });
+chiTieuSchema.index({ maHopDong: 1 });
+
 module.exports = mongoose.model("chiTieu", chiTieuSchema);

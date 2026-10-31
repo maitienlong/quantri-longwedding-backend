@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const sepayService = require('../services/sepay.service');
+const authMiddleware = require('../middleware/auth.middleware');
+const checkRole = require('../middleware/role.middleware');
 
 // SePay Webhook Health Check (GET)
 router.get('/webhook', (req, res) => {
@@ -13,9 +15,9 @@ router.post('/webhook', sepayService.handleWebhook);
 // Get SePay Config
 router.get('/config', sepayService.getConfig);
 
-// Update SePay Config
-router.post('/config', sepayService.updateConfig);
-router.put('/config', sepayService.updateConfig);
+// Update SePay Config (Chỉ Quản lý được phép cập nhật cấu hình ngân hàng)
+router.post('/config', authMiddleware, checkRole(["Quản lý"]), sepayService.updateConfig);
+router.put('/config', authMiddleware, checkRole(["Quản lý"]), sepayService.updateConfig);
 
 // Get QR Code Info for Contract
 router.get('/qr-info/:maHopDong', sepayService.getQrInfo);
