@@ -1,31 +1,39 @@
 const DichVu = require("../models/dichVu.model");
 const { success, error } = require("../utils/response");
 const { createLog } = require("../utils/logger");
+const { validateAndProcessPackageDetails } = require("../utils/packageDetailsValidator");
 const fs = require("fs");
 const path = require("path");
 
 async function create(req, res) {
-
-    console.log("Dữ liệu nhận được: ", req.body)
+    console.log("Dữ liệu nhận được: ", req.body);
     const { imageDichVu } = req.body;
-    const matches = imageDichVu.match(/^data:(.+);base64,(.+)$/);
-    if (!matches) return error(res, "Invalid base64");
-    const ext = matches[1].split("/")[1];
-    const data = matches[2];
+    let imageUrl = imageDichVu || "";
 
-    const uploadDir = path.join(__dirname, "../uploads");
-    if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
+    if (imageDichVu && imageDichVu.startsWith("data:")) {
+        const matches = imageDichVu.match(/^data:(.+);base64,(.+)$/);
+        if (!matches) return error(res, "Invalid base64");
+        const ext = matches[1].split("/")[1];
+        const data = matches[2];
+
+        const uploadDir = path.join(__dirname, "../uploads");
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+
+        const fileName = `longwedding_${Date.now()}.${ext}`;
+        const filePath = path.join(__dirname, "../uploads", fileName);
+        fs.writeFileSync(filePath, Buffer.from(data, "base64"));
+        imageUrl = `/api/images/${fileName}`;
     }
 
-    const fileName = `longwedding_${Date.now()}.${ext}`;
-    const filePath = path.join(__dirname, "../uploads", fileName);
-    fs.writeFileSync(filePath, Buffer.from(data, "base64"));
-    const imageUrl = `/api/images/${fileName}`;
-
-
     try {
-        const dichVu = new DichVu({
+        const processResult = validateAndProcessPackageDetails(req.body.details, req.body);
+        if (!processResult.isValid) {
+            return error(res, "Dữ liệu thông số gói không hợp lệ: " + processResult.errors.join("; "));
+        }
+
+        const dichVuData = {
             maDichVu: req.body.maDichVu,
             tenDichVu: req.body.tenDichVu,
             loaiDichVu: req.body.loaiDichVu,
@@ -34,21 +42,25 @@ async function create(req, res) {
             giaChoThueDichVu: req.body.giaChoThueDichVu,
             moTaDichVu: req.body.moTaDichVu,
             imageDichVu: imageUrl,
-            soLuongAnhChinhSua: req.body.soLuongAnhChinhSua,
-            soLuongAnh16x21: req.body.soLuongAnh16x21,
-            soLuongAnh20x30: req.body.soLuongAnh20x30,
-            soLuongAnh60x90: req.body.soLuongAnh60x90,
-            trangDiemNgayAnHoi: req.body.trangDiemNgayAnHoi,
-            trangDiemNgayCuoi: req.body.trangDiemNgayCuoi,
-            trangPhucChoDoiBeLe: req.body.trangPhucChoDoiBeLe,
-            trangPhucCoDauNgayAnHoi: req.body.trangPhucCoDauNgayAnHoi,
-            trangPhucChuReNgayAnHoi: req.body.trangPhucChuReNgayAnHoi,
-            trangPhucVayCuoiNgayCuoi: req.body.trangPhucVayCuoiNgayCuoi,
-            trangPhucVestChuReNgayCuoi: req.body.trangPhucVestChuReNgayCuoi,
-            hoaCamTay: req.body.hoaCamTay,
-            soLuongLichChup: Number(req.body.soLuongLichChup) || 0,
-            soLuongLichMake: Number(req.body.soLuongLichMake) || 0
-        });
+            schemaVersion: processResult.schemaVersion,
+            details: processResult.details,
+            soLuongAnhChinhSua: processResult.legacyFields.soLuongAnhChinhSua,
+            soLuongAnh16x21: processResult.legacyFields.soLuongAnh16x21,
+            soLuongAnh20x30: processResult.legacyFields.soLuongAnh20x30,
+            soLuongAnh60x90: processResult.legacyFields.soLuongAnh60x90,
+            trangDiemNgayAnHoi: processResult.legacyFields.trangDiemNgayAnHoi,
+            trangDiemNgayCuoi: processResult.legacyFields.trangDiemNgayCuoi,
+            trangPhucChoDoiBeLe: processResult.legacyFields.trangPhucChoDoiBeLe,
+            trangPhucCoDauNgayAnHoi: processResult.legacyFields.trangPhucCoDauNgayAnHoi,
+            trangPhucChuReNgayAnHoi: processResult.legacyFields.trangPhucChuReNgayAnHoi,
+            trangPhucVayCuoiNgayCuoi: processResult.legacyFields.trangPhucVayCuoiNgayCuoi,
+            trangPhucVestChuReNgayCuoi: processResult.legacyFields.trangPhucVestChuReNgayCuoi,
+            hoaCamTay: processResult.legacyFields.hoaCamTay,
+            soLuongLichChup: processResult.legacyFields.soLuongLichChup,
+            soLuongLichMake: processResult.legacyFields.soLuongLichMake
+        };
+
+        const dichVu = new DichVu(dichVuData);
         await dichVu.save();
         console.log("Đã tạo dịch vụ: " + req.body.tenDichVu + " thành công !");
         createLog({
@@ -72,20 +84,13 @@ async function update(req, res) {
             giaTriDichVu,
             giaChoThueDichVu,
             moTaDichVu,
-            imageDichVu,
-            soLuongAnhChinhSua,
-            soLuongAnh16x21,
-            soLuongAnh20x30,
-            soLuongAnh60x90,
-            trangDiemNgayAnHoi,
-            trangDiemNgayCuoi,
-            trangPhucChoDoiBeLe,
-            trangPhucCoDauNgayAnHoi,
-            trangPhucChuReNgayAnHoi,
-            trangPhucVayCuoiNgayCuoi,
-            trangPhucVestChuReNgayCuoi,
-            hoaCamTay
+            imageDichVu
         } = req.body;
+
+        const processResult = validateAndProcessPackageDetails(req.body.details, req.body);
+        if (!processResult.isValid) {
+            return error(res, "Dữ liệu thông số gói không hợp lệ: " + processResult.errors.join("; "));
+        }
 
         let imageUrl = imageDichVu;
         if (imageDichVu && imageDichVu.startsWith("data:")) {
@@ -112,20 +117,22 @@ async function update(req, res) {
             giaChoThueDichVu: giaChoThueDichVu,
             moTaDichVu: moTaDichVu,
             imageDichVu: imageUrl,
-            soLuongAnhChinhSua: Number(soLuongAnhChinhSua) || 0,
-            soLuongAnh16x21: Number(soLuongAnh16x21) || 0,
-            soLuongAnh20x30: Number(soLuongAnh20x30) || 0,
-            soLuongAnh60x90: Number(soLuongAnh60x90) || 0,
-            trangDiemNgayAnHoi: trangDiemNgayAnHoi || "",
-            trangDiemNgayCuoi: trangDiemNgayCuoi || "",
-            trangPhucChoDoiBeLe: trangPhucChoDoiBeLe || "",
-            trangPhucCoDauNgayAnHoi: trangPhucCoDauNgayAnHoi || "",
-            trangPhucChuReNgayAnHoi: trangPhucChuReNgayAnHoi || "",
-            trangPhucVayCuoiNgayCuoi: trangPhucVayCuoiNgayCuoi || "",
-            trangPhucVestChuReNgayCuoi: trangPhucVestChuReNgayCuoi || "",
-            hoaCamTay: hoaCamTay || "",
-            soLuongLichChup: Number(req.body.soLuongLichChup) || 0,
-            soLuongLichMake: Number(req.body.soLuongLichMake) || 0,
+            schemaVersion: processResult.schemaVersion,
+            details: processResult.details,
+            soLuongAnhChinhSua: processResult.legacyFields.soLuongAnhChinhSua,
+            soLuongAnh16x21: processResult.legacyFields.soLuongAnh16x21,
+            soLuongAnh20x30: processResult.legacyFields.soLuongAnh20x30,
+            soLuongAnh60x90: processResult.legacyFields.soLuongAnh60x90,
+            trangDiemNgayAnHoi: processResult.legacyFields.trangDiemNgayAnHoi,
+            trangDiemNgayCuoi: processResult.legacyFields.trangDiemNgayCuoi,
+            trangPhucChoDoiBeLe: processResult.legacyFields.trangPhucChoDoiBeLe,
+            trangPhucCoDauNgayAnHoi: processResult.legacyFields.trangPhucCoDauNgayAnHoi,
+            trangPhucChuReNgayAnHoi: processResult.legacyFields.trangPhucChuReNgayAnHoi,
+            trangPhucVayCuoiNgayCuoi: processResult.legacyFields.trangPhucVayCuoiNgayCuoi,
+            trangPhucVestChuReNgayCuoi: processResult.legacyFields.trangPhucVestChuReNgayCuoi,
+            hoaCamTay: processResult.legacyFields.hoaCamTay,
+            soLuongLichChup: processResult.legacyFields.soLuongLichChup,
+            soLuongLichMake: processResult.legacyFields.soLuongLichMake,
             ...(req.body.loaiDichVu !== undefined && { loaiDichVu: Number(req.body.loaiDichVu) })
         };
 
@@ -180,14 +187,11 @@ async function find(req, res) {
         return success(res, "Tải danh sách dịch vụ thành công", {
             count: dichVu.length,
             dichVu
-        })
-
+        });
     } catch (err) {
         return error(res, err.message);
     }
 }
-
-
 
 async function syncInvitationTemplates(templates) {
     try {
@@ -200,7 +204,6 @@ async function syncInvitationTemplates(templates) {
             const cleanCode = (item.code || item.serviceCode || item.id || '').trim();
             if (!cleanCode) continue;
 
-            // Loại bỏ mọi ký tự không phải số để lấy giá trị số chuẩn
             const rawPriceStr = (item.price || '').toString().replace(/[^0-9]/g, '');
             const priceNum = Number(rawPriceStr) || 0;
 

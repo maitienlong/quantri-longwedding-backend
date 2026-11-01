@@ -26,6 +26,7 @@ const cartItemSchema = new mongoose.Schema({
   donGia: { type: Number },
   giamGiaDichVu: { type: Number, default: 0 },
   thanhTien: { type: Number },
+  detailsSnapshot: { type: mongoose.Schema.Types.Mixed, default: null },
 
   soLuongLichChup: { type: Number, default: 0 },
   soLuongLichMake: { type: Number, default: 0 },
@@ -111,7 +112,7 @@ const hopDongSchema = new mongoose.Schema({
     gioTrangDiem: { type: String },
     diaDiemTrangDiem: { type: String }
   },
-  lichTrangDiem: [
+    lichTrangDiem: [
     {
       id: { type: String },
       dichVuId: { type: String },
@@ -120,6 +121,34 @@ const hopDongSchema = new mongoose.Schema({
       gioTrangDiem: { type: String },
       diaDiem: { type: String },
       thoMakeUp: { type: String },
+      ghiChu: { type: String }
+    }
+  ],
+  lichChup: [
+    {
+      id: { type: String },
+      dichVuId: { type: String },
+      tenDichVu: { type: String },
+      ngayGio: { type: Date },
+      ngayChup: { type: Date },
+      gioChup: { type: String },
+      diaDiem: { type: String },
+      thoChupHinh: { type: String },
+      nhanVien: { type: String },
+      ghiChu: { type: String }
+    }
+  ],
+  serviceSchedules: [
+    {
+      id: { type: String },
+      serviceId: { type: String },
+      serviceName: { type: String },
+      serviceType: { type: String },
+      luot: { type: Number, default: 1 },
+      totalLuot: { type: Number, default: 1 },
+      ngayGio: { type: String },
+      diaDiem: { type: String },
+      nhanVien: { type: String },
       ghiChu: { type: String }
     }
   ],
@@ -251,6 +280,7 @@ const hopDongSchema = new mongoose.Schema({
       reason: { type: String, default: "" },
       oldValue: { type: mongoose.Schema.Types.Mixed },
       newValue: { type: mongoose.Schema.Types.Mixed },
+      details: { type: mongoose.Schema.Types.Mixed },
       performedBy: { type: String, default: "Hệ thống" },
       role: { type: String, default: "" },
       timestamp: { type: Date, default: Date.now }
@@ -336,6 +366,9 @@ hopDongSchema.pre('save', async function (next) {
             if (!item.trangPhucVayCuoiNgayCuoi) item.trangPhucVayCuoiNgayCuoi = dichVuGoc.trangPhucVayCuoiNgayCuoi || "";
             if (!item.trangPhucVestChuReNgayCuoi) item.trangPhucVestChuReNgayCuoi = dichVuGoc.trangPhucVestChuReNgayCuoi || "";
             if (!item.hoaCamTay) item.hoaCamTay = dichVuGoc.hoaCamTay || "";
+            if (!item.detailsSnapshot && dichVuGoc.details) {
+              item.detailsSnapshot = JSON.parse(JSON.stringify(dichVuGoc.details));
+            }
           }
         }
 

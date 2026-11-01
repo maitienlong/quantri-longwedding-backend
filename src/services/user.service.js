@@ -184,7 +184,7 @@ async function loginUser(req, res) {
         const signOptions = isRemember ? { expiresIn: "36500d" } : { expiresIn: "365d" };
 
         const token = jwt.sign(
-            { username: user.username, fullname: user.fullname, isRemember },
+            { username: user.username, fullname: user.fullname, positon: user.positon, permission: user.permission, isRemember },
             process.env.JWT_SECRET,
             signOptions
         );
@@ -231,7 +231,7 @@ async function refreshToken(req, res) {
         }
 
         const newToken = jwt.sign(
-            { username: user.username, fullname: user.fullname, isRemember: true },
+            { username: user.username, fullname: user.fullname, positon: user.positon, permission: user.permission, isRemember: true },
             process.env.JWT_SECRET,
             { expiresIn: "36500d" }
         );

@@ -126,7 +126,9 @@ async function create(req, res) {
             }],
             dichVuChinh: req.body.dichVuChinh,
             isSpecialCollection: req.body.isSpecialCollection || false,
-            lichTrangDiem: req.body.lichTrangDiem || []
+            lichTrangDiem: req.body.lichTrangDiem || [],
+            lichChup: req.body.lichChup || [],
+            serviceSchedules: req.body.serviceSchedules || []
         });
 
         // Xử lý khách thanh toán trước
@@ -246,7 +248,7 @@ async function create(req, res) {
 
 async function update(req, res) {
     try {
-        const { maHopDong, gioHang, thanhToan, nguoiPhucVu, giaiDoan, subGiaiDoan, cacNgay, linkAnhGoc, linkAnhChinhSua, danhSachAnhIn, isSpecialCollection, lichTrangDiem, dichVuChinh } = req.body;
+        const { maHopDong, gioHang, thanhToan, nguoiPhucVu, giaiDoan, subGiaiDoan, cacNgay, linkAnhGoc, linkAnhChinhSua, danhSachAnhIn, isSpecialCollection, lichTrangDiem, lichChup, serviceSchedules, dichVuChinh, auditLog, newAuditEntry } = req.body;
         const hopDong = await HopDong.findOne({ maHopDong });
         if (!hopDong) return error(res, "Không tìm thấy hợp đồng");
 
@@ -254,6 +256,8 @@ async function update(req, res) {
 
         if (isSpecialCollection !== undefined) hopDong.isSpecialCollection = isSpecialCollection;
         if (lichTrangDiem !== undefined) hopDong.lichTrangDiem = lichTrangDiem;
+        if (lichChup !== undefined) hopDong.lichChup = lichChup;
+        if (serviceSchedules !== undefined) hopDong.serviceSchedules = serviceSchedules;
         if (gioHang !== undefined) {
             hopDong.gioHang = Array.isArray(gioHang) ? gioHang.map(item => {
                 const donGia = parseFloat(item.donGia?.toString().replace(/[^0-9.-]+/g, "") || item.giaChoThueDichVu?.toString().replace(/[^0-9.-]+/g, "") || 0);
@@ -407,6 +411,24 @@ async function update(req, res) {
                 }
             }
         }
+
+        // Ghi lại lịch sử hoạt động hợp đồng (Audit Log)
+        if (newAuditEntry) {
+            if (!hopDong.auditLog) hopDong.auditLog = [];
+            hopDong.auditLog.push({
+                action: newAuditEntry.action || "Cập nhật hợp đồng",
+                reason: newAuditEntry.reason || "",
+                oldValue: newAuditEntry.oldValue || null,
+                newValue: newAuditEntry.newValue || null,
+                details: newAuditEntry.details || [],
+                performedBy: req.user?.fullname || req.user?.tenNhanVien || newAuditEntry.performedBy || "Nhân viên",
+                role: req.user?.chucVu || req.user?.positon || newAuditEntry.role || "Admin",
+                timestamp: new Date()
+            });
+        } else if (Array.isArray(auditLog)) {
+            hopDong.auditLog = auditLog;
+        }
+
         await hopDong.save();
 
         createLog({
@@ -990,6 +1012,17 @@ async function updateProgress(req, res) {
                     soLuongAnhIn: Array.isArray(hopDong.danhSachAnhIn) ? hopDong.danhSachAnhIn.length : 0
                 }
             });
+
+            if (!hopDong.auditLog) hopDong.auditLog = [];
+            hopDong.auditLog.push({
+                action: "Chuyển tiến trình",
+                reason: data?.ghiChu || defaultNote,
+                oldValue: { giaiDoan: hopDong.giaiDoan, subGiaiDoan: hopDong.subGiaiDoan },
+                newValue: { giaiDoan: nextStage, subGiaiDoan: nextSubStage },
+                performedBy: performerName,
+                role: performerRole,
+                timestamp: new Date()
+            });
         }
 
         hopDong.giaiDoan = nextStage;
@@ -1117,18 +1150,42 @@ async function customerApproveAlbum(req, res) {
 // =============================================================
 function isTechnicianUser(user) {
     if (!user) return false;
+    
+    // Nếu là admin hoặc có quyền quản lý, dev, along -> chắc chắn không phải kỹ thuật viên
+    if (user.permission === 1 || user.username === "dev" || user.username === "along" || user.is_admin === true) {
+        return false;
+    }
+    
     const role = (user.positon || user.role || user.chucVu || "").toLowerCase();
-    const isManagerOrAdmin = 
+    
+    // Nếu role thuộc nhóm quản lý, admin, kế toán, sale -> không phải kỹ thuật viên
+    if (
         role.includes("quản lý") || 
         role.includes("admin") || 
         role.includes("quản trị") || 
         role.includes("kế toán") ||
         role.includes("sale") ||
         role.includes("bán hàng") ||
-        user.permission === 1 || 
-        user.username === "along";
-        
-    return !isManagerOrAdmin;
+        role.includes("thu ngân") ||
+        role.includes("tiếp tân")
+    ) {
+        return false;
+    }
+    
+    // Chỉ xem là kỹ thuật viên khi role RÕ RÀNG là thợ (chụp hình, makeup, chỉnh ảnh...)
+    if (
+        role.includes("thợ") ||
+        role.includes("chụp") ||
+        role.includes("make") ||
+        role.includes("photoshop") ||
+        role.includes("chỉnh ảnh") ||
+        role.includes("kỹ thuật")
+    ) {
+        return true;
+    }
+
+    // Mặc định an toàn: Không ẩn đơn giá nếu không xác định rõ là kỹ thuật viên
+    return false;
 }
 
 function sanitizeContractForRole(contractDoc, user) {
