@@ -20,7 +20,8 @@ async function createUser(req, res) {
             chiTieuTuan: data.chiTieuTuan !== undefined ? Number(data.chiTieuTuan) : 5,
             chiTieuThang: data.chiTieuThang !== undefined ? Number(data.chiTieuThang) : 20,
             chiTieuNam: data.chiTieuNam !== undefined ? Number(data.chiTieuNam) : 200,
-            hoaHongTheoLoaiHD: Array.isArray(data.hoaHongTheoLoaiHD) ? data.hoaHongTheoLoaiHD : []
+            hoaHongTheoLoaiHD: Array.isArray(data.hoaHongTheoLoaiHD) ? data.hoaHongTheoLoaiHD : [],
+            permissions: Array.isArray(data.permissions) ? data.permissions : []
         });
         await user.save();
         console.log("Tài khoản: " + data.fullname + " đã được tạo thành công !");
@@ -44,7 +45,7 @@ async function createUser(req, res) {
 
 async function updateUser(req, res) {
     try {
-        const { username, password, fullname, birthday, positon, permission, avatar, luongCoBan, luongHoaHong, loaiHoaHong, chiTieuTuan, chiTieuThang, chiTieuNam, hoaHongTheoLoaiHD } = req.body;
+        const { username, password, fullname, birthday, positon, permission, permissions, avatar, luongCoBan, luongHoaHong, loaiHoaHong, chiTieuTuan, chiTieuThang, chiTieuNam, hoaHongTheoLoaiHD } = req.body;
         if (!username) return error(res, "Thiếu username để cập nhật");
 
         // Kiểm tra quyền người thực hiện thao tác
@@ -85,6 +86,7 @@ async function updateUser(req, res) {
             if (chiTieuThang !== undefined) user.chiTieuThang = Number(chiTieuThang);
             if (chiTieuNam !== undefined) user.chiTieuNam = Number(chiTieuNam);
             if (hoaHongTheoLoaiHD !== undefined && Array.isArray(hoaHongTheoLoaiHD)) user.hoaHongTheoLoaiHD = hoaHongTheoLoaiHD;
+            if (permissions !== undefined && Array.isArray(permissions)) user.permissions = permissions;
         }
 
         await user.save();
@@ -184,7 +186,7 @@ async function loginUser(req, res) {
         const signOptions = isRemember ? { expiresIn: "36500d" } : { expiresIn: "365d" };
 
         const token = jwt.sign(
-            { username: user.username, fullname: user.fullname, positon: user.positon, permission: user.permission, isRemember },
+            { username: user.username, fullname: user.fullname, positon: user.positon, permission: user.permission, permissions: user.permissions || [], isRemember },
             process.env.JWT_SECRET,
             signOptions
         );
@@ -203,6 +205,7 @@ async function loginUser(req, res) {
             birthday: user.birthday,
             positon: user.positon,
             permission: user.permission,
+            permissions: user.permissions || [],
             avatar: user.avatar,
             isRemember: isRemember
         });
@@ -231,7 +234,7 @@ async function refreshToken(req, res) {
         }
 
         const newToken = jwt.sign(
-            { username: user.username, fullname: user.fullname, positon: user.positon, permission: user.permission, isRemember: true },
+            { username: user.username, fullname: user.fullname, positon: user.positon, permission: user.permission, permissions: user.permissions || [], isRemember: true },
             process.env.JWT_SECRET,
             { expiresIn: "36500d" }
         );
@@ -241,10 +244,60 @@ async function refreshToken(req, res) {
             username: user.username,
             fullname: user.fullname,
             positon: user.positon,
-            permission: user.permission
+            permission: user.permission,
+            permissions: user.permissions || []
         });
     } catch (err) {
         return error(res, "Không thể gia hạn phiên đăng nhập: " + err.message, 401);
+    }
+}
+
+async function updateUserPermissions(req, res) {
+    try {
+        const { username, permissions } = req.body;
+        if (!username) return error(res, "Thiếu username để cập nhật quyền", 400);
+
+        // Kiểm tra quyền người thực hiện thao tác: chỉ Quản lý mới được phân quyền
+        let isManager = false;
+        if (req.user && req.user.username) {
+            const requester = await User.findOne({ username: req.user.username });
+            if (requester) {
+                isManager = requester.positon === "Quản lý" || 
+                            requester.positon === "Admin" || 
+                            requester.positon === "Quản trị viên" || 
+                            requester.permission === 1 || 
+                            requester.username === "along";
+            }
+        }
+
+        if (!isManager) {
+            return error(res, "Bạn không có quyền phân quyền cho người dùng khác", 403);
+        }
+
+        const user = await User.findOne({ username });
+        if (!user) return error(res, "Không tìm thấy tài khoản người dùng", 404);
+
+        user.permissions = Array.isArray(permissions) ? permissions : [];
+        if (user.username !== 'along' && user.positon !== 'Quản lý' && user.positon !== 'Admin' && user.positon !== 'Quản trị viên') {
+            const hasAll = user.permissions.includes('*') || user.permissions.includes('all');
+            user.permission = hasAll ? 1 : 2;
+        }
+        await user.save();
+
+        createLog({
+            action: "Phân quyền chức năng nhân viên",
+            user: req.user?.fullname || "Quản lý",
+            req,
+            details: { username, fullname: user.fullname, permissions: user.permissions }
+        });
+
+        return success(res, "Cập nhật phân quyền chức năng thành công!", {
+            username: user.username,
+            fullname: user.fullname,
+            permissions: user.permissions
+        });
+    } catch (err) {
+        return error(res, "Cập nhật phân quyền thất bại: " + err.message, 500);
     }
 }
 
@@ -253,6 +306,7 @@ module.exports = {
     refreshToken,
     createUser,
     updateUser,
+    updateUserPermissions,
     removeUser,
     findUsers
 };

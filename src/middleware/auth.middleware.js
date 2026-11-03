@@ -15,15 +15,16 @@ module.exports = async function authMiddleware(req, res, next) {
     const decoded = jwt.verify(token, SECRET_KEY);
     req.user = decoded; // lưu thông tin user vào req để controller có thể dùng
 
-    // Đảm bảo req.user luôn có đầy đủ chức vụ và quyền hạn từ database nếu token cũ thiếu
-    if (decoded && decoded.username && (!decoded.positon || decoded.permission === undefined)) {
+    // Đảm bảo req.user luôn có đầy đủ chức vụ và quyền hạn từ database
+    if (decoded && decoded.username) {
       try {
-        const dbUser = await User.findOne({ username: decoded.username }).select('username fullname positon permission');
+        const dbUser = await User.findOne({ username: decoded.username }).select('username fullname positon permission permissions');
         if (dbUser) {
           req.user = {
             ...decoded,
             positon: dbUser.positon,
-            permission: dbUser.permission
+            permission: dbUser.permission,
+            permissions: dbUser.permissions || []
           };
         }
       } catch (dbErr) {

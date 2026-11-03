@@ -8,6 +8,7 @@ const userSchema = new mongoose.Schema({
     birthday: { type: String },
     positon: { type: String, required: true },
     permission: { type: Number, required: true },
+    permissions: [{ type: String }], // Danh sách mã quyền tính năng chi tiết (vd: 'tongquan', 'banhang', 'lichcuahang', ...)
     avatar: { type: String },
     luongCoBan: { type: Number, default: 0 },
     luongHoaHong: { type: Number, default: 0 },

@@ -81,6 +81,32 @@ function ensurePaymentProgress(contract) {
 
 async function create(req, res) {
     try {
+        const hasAssignCrewPerm = req.user && (
+            req.user.username === 'along' ||
+            req.user.positon === 'Quản lý' ||
+            req.user.positon === 'Admin' ||
+            (Array.isArray(req.user.permissions)
+                ? (req.user.permissions.includes('*') || req.user.permissions.includes('all') || req.user.permissions.includes('phan-cong-tho'))
+                : (req.user.permission === 1)
+            )
+        );
+
+        if (!hasAssignCrewPerm) {
+            if (req.body.nguoiPhucVu) {
+                req.body.nguoiPhucVu.thoChupHinh = "";
+                req.body.nguoiPhucVu.thoMakeUp = "";
+                req.body.nguoiPhucVu.thoChinhAnh = "";
+            }
+            if (Array.isArray(req.body.serviceSchedules)) {
+                req.body.serviceSchedules.forEach(s => { s.nhanVien = ""; });
+            }
+            if (Array.isArray(req.body.lichChup)) {
+                req.body.lichChup.forEach(s => { s.thoChupHinh = ""; s.nhanVien = ""; });
+            }
+            if (Array.isArray(req.body.lichTrangDiem)) {
+                req.body.lichTrangDiem.forEach(s => { s.thoMakeUp = ""; s.nhanVien = ""; });
+            }
+        }
         // Kiểm tra trùng lịch chụp hình (khoảng cách dưới 3 tiếng)
         if (req.body.cacNgay?.ngayChup) {
             const ngayChupTime = new Date(req.body.cacNgay.ngayChup).getTime();
@@ -282,7 +308,30 @@ async function update(req, res) {
                 hopDong.cacNgay.ngayChuyenInAnh = oldNgayChuyen;
             }
         }
-        if (nguoiPhucVu !== undefined) hopDong.nguoiPhucVu = nguoiPhucVu;
+        // Kiểm tra quyền phân công thợ
+        const hasAssignCrewPerm = req.user && (
+            req.user.username === 'along' ||
+            req.user.positon === 'Quản lý' ||
+            req.user.positon === 'Admin' ||
+            (Array.isArray(req.user.permissions)
+                ? (req.user.permissions.includes('*') || req.user.permissions.includes('all') || req.user.permissions.includes('phan-cong-tho'))
+                : (req.user.permission === 1)
+            )
+        );
+
+        if (nguoiPhucVu !== undefined) {
+            if (!hasAssignCrewPerm && hopDong.nguoiPhucVu) {
+                // Bảo lưu nhân sự thợ cũ nếu tài khoản không có quyền phân công thợ
+                hopDong.nguoiPhucVu = {
+                    ...nguoiPhucVu,
+                    thoChupHinh: hopDong.nguoiPhucVu.thoChupHinh || "",
+                    thoMakeUp: hopDong.nguoiPhucVu.thoMakeUp || "",
+                    thoChinhAnh: hopDong.nguoiPhucVu.thoChinhAnh || ""
+                };
+            } else {
+                hopDong.nguoiPhucVu = nguoiPhucVu;
+            }
+        }
         const prevStage = hopDong.giaiDoan;
         const prevSubStage = hopDong.subGiaiDoan;
 
@@ -293,6 +342,29 @@ async function update(req, res) {
             }
             hopDong.giaiDoan = Number(giaiDoan);
         }
+        if (!hasAssignCrewPerm) {
+            if (serviceSchedules !== undefined && Array.isArray(serviceSchedules)) {
+                serviceSchedules.forEach(sch => {
+                    const orig = (hopDong.serviceSchedules || []).find(os => (os.id && os.id === sch.id) || (os._id && String(os._id) === String(sch._id || sch.id)));
+                    sch.nhanVien = orig ? (orig.nhanVien || "") : "";
+                });
+            }
+            if (lichChup !== undefined && Array.isArray(lichChup)) {
+                lichChup.forEach(sch => {
+                    const orig = (hopDong.lichChup || []).find(os => (os.id && os.id === sch.id) || (os._id && String(os._id) === String(sch._id || sch.id)));
+                    sch.thoChupHinh = orig ? (orig.thoChupHinh || "") : "";
+                    sch.nhanVien = orig ? (orig.nhanVien || orig.thoChupHinh || "") : "";
+                });
+            }
+            if (lichTrangDiem !== undefined && Array.isArray(lichTrangDiem)) {
+                lichTrangDiem.forEach(sch => {
+                    const orig = (hopDong.lichTrangDiem || []).find(os => (os.id && os.id === sch.id) || (os._id && String(os._id) === String(sch._id || sch.id)));
+                    sch.thoMakeUp = orig ? (orig.thoMakeUp || "") : "";
+                    sch.nhanVien = orig ? (orig.nhanVien || orig.thoMakeUp || "") : "";
+                });
+            }
+        }
+
         if (subGiaiDoan !== undefined) {
             hopDong.subGiaiDoan = subGiaiDoan;
         } else if (giaiDoan !== undefined && Number(giaiDoan) !== prevStage) {
@@ -710,6 +782,44 @@ async function list(req, res) {
                         ]
                     };
                 }
+            } else if (dateField === 'makeUp' || dateField === 'makeup' || dateField === 'cacNgay.ngayTrangDiem') {
+                if (filter && filter !== 'all') {
+                    const range = getICTDateRange(filter);
+                    if (range) {
+                        dateConditions = {
+                            $or: [
+                                { 'cacNgay.ngayTrangDiem': { $gte: range.start, $lt: range.end } },
+                                { 'lichTrangDiem.ngayTrangDiem': { $gte: range.start, $lt: range.end } },
+                                { 'serviceSchedules.ngayGio': { $gte: range.start.toISOString().slice(0, 10), $lte: range.end.toISOString() } }
+                            ]
+                        };
+                    }
+                } else {
+                    dateConditions = {
+                        $or: [
+                            { 'cacNgay.ngayTrangDiem': { $exists: true, $ne: null } },
+                            { 'serviceSchedules.serviceType': 'makeup' },
+                            { 'lichTrangDiem.0': { $exists: true } }
+                        ]
+                    };
+                }
+            } else if (dateField === 'tongHop') {
+                if (filter && filter !== 'all') {
+                    const range = getICTDateRange(filter);
+                    if (range) {
+                        dateConditions = {
+                            $or: [
+                                { 'cacNgay.ngayChup': { $gte: range.start, $lt: range.end } },
+                                { 'cacNgay.ngayTrangDiem': { $gte: range.start, $lt: range.end } },
+                                { 'cacNgay.ngayChinhAnh': { $gte: range.start, $lt: range.end } },
+                                { 'cacNgay.ngayTraAnh': { $gte: range.start, $lt: range.end } },
+                                { 'cacNgay.ngayAnHoi': { $gte: range.start, $lt: range.end } },
+                                { 'cacNgay.ngayCuoi': { $gte: range.start, $lt: range.end } },
+                                { 'serviceSchedules.ngayGio': { $gte: range.start.toISOString().slice(0, 10), $lte: range.end.toISOString() } }
+                            ]
+                        };
+                    }
+                }
             } else {
                 if (filter && filter !== 'all') {
                     const range = getICTDateRange(filter);
@@ -791,6 +901,10 @@ async function list(req, res) {
         if (isCalendar) {
             if (dateField === 'anHoiVaCuoi') {
                 sortQuery = { 'cacNgay.ngayAnHoi': 1, 'cacNgay.ngayCuoi': 1 };
+            } else if (dateField === 'makeUp' || dateField === 'makeup' || dateField === 'cacNgay.ngayTrangDiem') {
+                sortQuery = { 'cacNgay.ngayTrangDiem': 1 };
+            } else if (dateField === 'tongHop') {
+                sortQuery = { ngayHopDong: -1 };
             } else {
                 sortQuery = { [dateField]: 1 };
             }
