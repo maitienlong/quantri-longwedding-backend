@@ -852,6 +852,27 @@ async function list(req, res) {
                         ]
                     };
                 }
+            } else if (dateField === 'chupHinh' || dateField === 'chup' || dateField === 'cacNgay.ngayChup') {
+                if (filter && filter !== 'all') {
+                    const range = getICTDateRange(filter);
+                    if (range) {
+                        dateConditions = {
+                            $or: [
+                                { 'cacNgay.ngayChup': { $gte: range.start, $lt: range.end } },
+                                { 'lichChup.ngayGio': { $gte: range.start, $lt: range.end } },
+                                { 'serviceSchedules.ngayGio': { $gte: range.start.toISOString().slice(0, 10), $lte: range.end.toISOString() } }
+                            ]
+                        };
+                    }
+                } else {
+                    dateConditions = {
+                        $or: [
+                            { 'cacNgay.ngayChup': { $exists: true, $ne: null } },
+                            { 'serviceSchedules.serviceType': 'photo' },
+                            { 'lichChup.0': { $exists: true } }
+                        ]
+                    };
+                }
             } else if (dateField === 'tongHop') {
                 if (filter && filter !== 'all') {
                     const range = getICTDateRange(filter);

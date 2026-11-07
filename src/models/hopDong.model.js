@@ -52,7 +52,9 @@ const cartItemSchema = new mongoose.Schema({
   gioTrangDiem: { type: String, default: "" },
   diaDiemTrangDiem: { type: String, default: "" },
   thoMakeUp: { type: String, default: "" },
-  ghiChuTrangDiem: { type: String, default: "" }
+  ghiChuTrangDiem: { type: String, default: "" },
+  duongDanAnh: { type: String, default: "" },
+  ghiChuDuongDan: { type: String, default: "" }
 });
 
 const toDate = (v) => {
