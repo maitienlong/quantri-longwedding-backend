@@ -427,7 +427,23 @@ const getCustomerAlbum = async (req, res) => {
     const isOwner = await verifyAlbumOwnership(album, req.user);
     if (!isOwner) return res.status(403).json({ status: 'error', message: 'Bạn không có quyền xem album này' });
 
-    return res.status(200).json({ status: 'success', album });
+    let contract = null;
+    let otherAlbums = [];
+    if (album.maHopDong) {
+      contract = await HOPDONG.findOne({ maHopDong: album.maHopDong })
+        .select('maHopDong gioHang dichVuChinh linkAnhGoc linkAnhChinhSua extraDriveLinks cacNgay khachHang1 khachHang2 ghiChu')
+        .populate('gioHang.dichVu', 'tenDichVu loaiDichVu maDichVu')
+        .lean();
+
+      if (contract) {
+        otherAlbums = await ALBUM.find({
+          maHopDong: contract.maHopDong,
+          publicLink: { $ne: publicLink }
+        }).select('publicLink chuDe trangThai soLuongAnhGioiHan driveLink').lean();
+      }
+    }
+
+    return res.status(200).json({ status: 'success', album, contract, otherAlbums });
   } catch (error) {
     return res.status(500).json({ status: 'error', message: 'Lỗi server' });
   }
@@ -436,7 +452,7 @@ const getCustomerAlbum = async (req, res) => {
 const heartImage = async (req, res) => {
   try {
     const { publicLink } = req.params;
-    const { idDrive, isHearted } = req.body;
+    const { idDrive, isHearted, isCover } = req.body;
 
     const album = await ALBUM.findOne({ publicLink });
     if (!album) return res.status(404).json({ status: 'error', message: 'Không tìm thấy album' });
@@ -447,10 +463,41 @@ const heartImage = async (req, res) => {
     const photo = album.danhSachAnh.find(p => p.idDrive === idDrive);
     if (!photo) return res.status(404).json({ status: 'error', message: 'Không tìm thấy ảnh' });
 
-    photo.isHearted = isHearted;
+    if (isCover !== undefined) {
+      photo.isCover = Boolean(isCover);
+      if (photo.isCover) photo.isHearted = true;
+    }
+    if (isHearted !== undefined) {
+      photo.isHearted = Boolean(isHearted);
+      if (!photo.isHearted) photo.isCover = false;
+    }
     await album.save();
 
-    return res.status(200).json({ status: 'success', message: 'Đã cập nhật trạng thái' });
+    return res.status(200).json({ status: 'success', message: 'Đã cập nhật trạng thái', isHearted: photo.isHearted, isCover: photo.isCover });
+  } catch (error) {
+    return res.status(500).json({ status: 'error', message: 'Lỗi server' });
+  }
+};
+
+const coverImage = async (req, res) => {
+  try {
+    const { publicLink } = req.params;
+    const { idDrive, isCover } = req.body;
+
+    const album = await ALBUM.findOne({ publicLink });
+    if (!album) return res.status(404).json({ status: 'error', message: 'Không tìm thấy album' });
+
+    const isOwner = await verifyAlbumOwnership(album, req.user);
+    if (!isOwner) return res.status(403).json({ status: 'error', message: 'Bạn không có quyền thao tác trên album này' });
+
+    const photo = album.danhSachAnh.find(p => p.idDrive === idDrive);
+    if (!photo) return res.status(404).json({ status: 'error', message: 'Không tìm thấy ảnh' });
+
+    photo.isCover = isCover !== undefined ? Boolean(isCover) : !photo.isCover;
+    if (photo.isCover) photo.isHearted = true;
+    await album.save();
+
+    return res.status(200).json({ status: 'success', message: 'Đã cập nhật ảnh cổng', isCover: photo.isCover, isHearted: photo.isHearted });
   } catch (error) {
     return res.status(500).json({ status: 'error', message: 'Lỗi server' });
   }
@@ -459,7 +506,7 @@ const heartImage = async (req, res) => {
 const commentImage = async (req, res) => {
   try {
     const { publicLink } = req.params;
-    const { idDrive, noiDung } = req.body;
+    const { idDrive, noiDung, coordinateX, coordinateY, normalizedX, normalizedY } = req.body;
 
     const album = await ALBUM.findOne({ publicLink });
     if (!album) return res.status(404).json({ status: 'error', message: 'Không tìm thấy album' });
@@ -473,10 +520,22 @@ const commentImage = async (req, res) => {
     }
     if (!photo) return res.status(404).json({ status: 'error', message: 'Không tìm thấy ảnh' });
 
-    photo.comments.push({ noiDung, ngayTao: new Date() });
+    const newComment = {
+      noiDung,
+      coordinateX: coordinateX !== undefined ? Number(coordinateX) : undefined,
+      coordinateY: coordinateY !== undefined ? Number(coordinateY) : undefined,
+      normalizedX: normalizedX !== undefined ? Number(normalizedX) : undefined,
+      normalizedY: normalizedY !== undefined ? Number(normalizedY) : undefined,
+      author: req.user?.fullname || 'Khách hàng',
+      ngayTao: new Date()
+    };
+    photo.comments.push(newComment);
+    if (photo.isHearted === false) {
+      photo.isHearted = true;
+    }
     await album.save();
 
-    return res.status(200).json({ status: 'success', message: 'Đã thêm bình luận', comments: photo.comments });
+    return res.status(200).json({ status: 'success', message: 'Đã thêm bình luận', comments: photo.comments, comment: newComment });
   } catch (error) {
     return res.status(500).json({ status: 'error', message: 'Lỗi server' });
   }
@@ -1562,6 +1621,7 @@ module.exports = {
   getAdminAlbumDetail,
   getCustomerAlbum,
   heartImage,
+  coverImage,
   commentImage,
   updateAlbumSettings,
   completeSelection,

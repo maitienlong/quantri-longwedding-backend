@@ -34,6 +34,7 @@ router.post('/:id/versions', authMiddleware, albumService.uploadReviewVersion);
 // API cho Khách hàng
 router.get('/customer/:publicLink', authMiddleware, albumService.getCustomerAlbum);
 router.post('/customer/:publicLink/heart', authMiddleware, albumService.heartImage);
+router.post('/customer/:publicLink/cover', authMiddleware, albumService.coverImage);
 router.post('/customer/:publicLink/comment', authMiddleware, albumService.commentImage);
 router.post('/customer/:publicLink/complete', authMiddleware, albumService.completeSelection);
 router.post('/customer/:publicLink/share', authMiddleware, albumService.generateShareLink);
