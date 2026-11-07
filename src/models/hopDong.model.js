@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const KHACHHANG = require("./khachHang.model");
 const payment = require("./payment.model");
 const DICHVU = require("./dichVu.model");
+const { applyPricingToContract, snapshotContractPackage } = require("../services/contractPricing");
 
 const paymentSubSchema = new mongoose.Schema({
   id: { type: String, required: true },
@@ -30,6 +31,7 @@ const cartItemSchema = new mongoose.Schema({
 
   soLuongLichChup: { type: Number, default: 0 },
   soLuongLichMake: { type: Number, default: 0 },
+  soLuongLichQuay: { type: Number, default: 0 },
   soLuot: { type: Number, default: 1 },
   soLuongAnhChinhSua: { type: Number, default: 0 },
   soLuongAnh16x21: { type: Number, default: 0 },
@@ -63,10 +65,10 @@ const toDate = (v) => {
 
 const hopDongSchema = new mongoose.Schema({
   maHopDong: { type: String, required: true, unique: true },
-  contractType: { 
-    type: String, 
-    enum: ['FULL_WEDDING', 'SINGLE_SERVICE'], 
-    default: 'FULL_WEDDING' 
+  contractType: {
+    type: String,
+    enum: ['FULL_WEDDING', 'SINGLE_SERVICE'],
+    default: 'FULL_WEDDING'
   },
   ngayHopDong: { type: Date, required: true, set: toDate },
 
@@ -110,9 +112,12 @@ const hopDongSchema = new mongoose.Schema({
     chotLich: { type: String },
     ngayTrangDiem: { type: Date },
     gioTrangDiem: { type: String },
-    diaDiemTrangDiem: { type: String }
+    diaDiemTrangDiem: { type: String },
+    ngayQuayPhim: { type: Date },
+    gioQuayPhim: { type: String },
+    diaDiemQuayPhim: { type: String }
   },
-    lichTrangDiem: [
+  lichTrangDiem: [
     {
       id: { type: String },
       dichVuId: { type: String },
@@ -138,6 +143,20 @@ const hopDongSchema = new mongoose.Schema({
       ghiChu: { type: String }
     }
   ],
+  lichQuayPhim: [
+    {
+      id: { type: String },
+      dichVuId: { type: String },
+      tenDichVu: { type: String },
+      ngayGio: { type: Date },
+      ngayQuay: { type: Date },
+      gioQuay: { type: String },
+      diaDiem: { type: String },
+      thoQuayPhim: { type: String },
+      nhanVien: { type: String },
+      ghiChu: { type: String }
+    }
+  ],
   serviceSchedules: [
     {
       id: { type: String },
@@ -156,43 +175,52 @@ const hopDongSchema = new mongoose.Schema({
     thoChupHinh: { type: String },
     thoChinhAnh: { type: String },
     thoMakeUp: { type: String },
+    thoQuayPhim: { type: String },
     banHang: { type: String },
     phucVu: { type: String }
   },
   giaiDoan: { type: Number, required: true },
-  subGiaiDoan: { 
-    type: String, 
+  subGiaiDoan: {
+    type: String,
     enum: [
-      'dang_thuc_hien', 
-      'cho_chinh', 
-      'dang_chinh', 
-      'dang_hau_ky', 
-      'da_giao_file_goc', 
-      'khach_da_chon_anh', 
-      'dang_chinh_anh', 
-      'cho_khach_duyet', 
-      'khach_duyet_anh', 
-      'cho_khach_duyet_layout', 
-      'khach_da_duyet_layout', 
-      'da_gui_xuong_in', 
-      'studio_da_nhan_hang', 
-      'da_tra_khach', 
+      'dang_thuc_hien',
+      'cho_chinh',
+      'dang_chinh',
+      'dang_hau_ky',
+      'da_giao_file_goc',
+      'khach_da_chon_anh',
+      'dang_chinh_anh',
+      'cho_khach_duyet',
+      'khach_duyet_anh',
+      'cho_khach_duyet_layout',
+      'khach_da_duyet_layout',
+      'da_gui_xuong_in',
+      'studio_da_nhan_hang',
+      'da_tra_khach',
       'hoan_thanh',
       'bao_luu',
       'huy'
-    ], 
-    default: 'dang_thuc_hien' 
+    ],
+    default: 'dang_thuc_hien'
   },
   dichVuChinh: { type: Number, required: true },
   linkAnhGoc: { type: String },
   linkAnhChinhSua: { type: String },
+  extraDriveLinks: [
+    {
+      id: { type: String },
+      name: { type: String, default: "" },
+      url: { type: String, default: "" },
+      createdAt: { type: Date, default: Date.now }
+    }
+  ],
   danhSachAnhIn: [
     {
       kichThuoc: { type: String },
       soLuong: { type: Number }
     }
   ],
-  
+
   // Phân hệ Hậu kỳ & In ấn mở rộng
   hauKy: {
     linkAnhGoc: { type: String, default: "" },
@@ -246,10 +274,10 @@ const hopDongSchema = new mongoose.Schema({
       ngayTraThucTe: { type: Date },
       tinhTrangKhiTra: { type: String, default: "" },
       tienCocDo: { type: Number, default: 0 },
-      trangThai: { 
-        type: String, 
-        enum: ['GIU_CHO', 'DANG_MUON', 'DA_TRA', 'HUY'], 
-        default: 'GIU_CHO' 
+      trangThai: {
+        type: String,
+        enum: ['GIU_CHO', 'DANG_MUON', 'DA_TRA', 'HUY'],
+        default: 'GIU_CHO'
       },
       ghiChu: { type: String, default: "" }
     }
@@ -264,10 +292,10 @@ const hopDongSchema = new mongoose.Schema({
       loaiHoaHong: { type: Number, default: 0 },
       mucHoaHong: { type: Number, default: 0 },
       tienHoaHong: { type: Number, default: 0 },
-      trangThai: { 
-        type: String, 
-        enum: ['PENDING', 'APPROVED', 'PAID'], 
-        default: 'PENDING' 
+      trangThai: {
+        type: String,
+        enum: ['PENDING', 'APPROVED', 'PAID'],
+        default: 'PENDING'
       },
       ghiChu: { type: String, default: "" }
     }
@@ -316,6 +344,7 @@ const hopDongSchema = new mongoose.Schema({
   ],
   isSpecialCollection: { type: Boolean, default: false },
   specialCollectionOrder: { type: Number, default: 0 },
+  packageSnapshot: { type: mongoose.Schema.Types.Mixed, default: null },
   soanDo: {
     ngaySoan: { type: String },
     ngayMuon: { type: String },
@@ -335,117 +364,45 @@ const hopDongSchema = new mongoose.Schema({
 // MIDDLEWARE XỬ LÝ LOGIC TÍNH TOÁN
 // ==========================================
 hopDongSchema.pre('save', async function (next) {
-  let tongChuaGiam = 0;
-
   try {
-    // 1. Duyệt giỏ hàng để lấy giá và tính tổng
+    // 1. Duyệt giỏ hàng để lấy giá, snapshot chi tiết dịch vụ và tính tổng
     if (this.gioHang && this.gioHang.length > 0) {
       for (let item of this.gioHang) {
-        if (!item.donGia || !item.loaiDichVu || !item.tenDichVuSnapshot) {
+        if (!item.donGia || !item.loaiDichVu || !item.tenDichVuSnapshot || !item.detailsSnapshot) {
           let dichVuGoc = null;
           if (item.dichVu) {
             try {
               dichVuGoc = await DICHVU.findById(item.dichVu);
-            } catch (e) {}
+            } catch (e) { }
           }
           if (dichVuGoc) {
-            if (!item.donGia) item.donGia = dichVuGoc.giaTriDichVu;
-            if (!item.tenDichVuSnapshot) item.tenDichVuSnapshot = dichVuGoc.tenDichVu;
-            if (!item.loaiDichVu) item.loaiDichVu = dichVuGoc.loaiDichVu;
-            if (item.soLuongLichChup === undefined || item.soLuongLichChup === null) item.soLuongLichChup = dichVuGoc.soLuongLichChup || 0;
-            if (item.soLuongLichMake === undefined || item.soLuongLichMake === null) item.soLuongLichMake = dichVuGoc.soLuongLichMake || 0;
-            if (item.soLuongAnhChinhSua === undefined || item.soLuongAnhChinhSua === null) item.soLuongAnhChinhSua = dichVuGoc.soLuongAnhChinhSua || 0;
-            if (item.soLuongAnh16x21 === undefined || item.soLuongAnh16x21 === null) item.soLuongAnh16x21 = dichVuGoc.soLuongAnh16x21 || 0;
-            if (item.soLuongAnh20x30 === undefined || item.soLuongAnh20x30 === null) item.soLuongAnh20x30 = dichVuGoc.soLuongAnh20x30 || 0;
-            if (item.soLuongAnh60x90 === undefined || item.soLuongAnh60x90 === null) item.soLuongAnh60x90 = dichVuGoc.soLuongAnh60x90 || 0;
-            if (!item.trangDiemNgayAnHoi) item.trangDiemNgayAnHoi = dichVuGoc.trangDiemNgayAnHoi || "";
-            if (!item.trangDiemNgayCuoi) item.trangDiemNgayCuoi = dichVuGoc.trangDiemNgayCuoi || "";
-            if (!item.trangPhucChoDoiBeLe) item.trangPhucChoDoiBeLe = dichVuGoc.trangPhucChoDoiBeLe || "";
-            if (!item.trangPhucCoDauNgayAnHoi) item.trangPhucCoDauNgayAnHoi = dichVuGoc.trangPhucCoDauNgayAnHoi || "";
-            if (!item.trangPhucChuReNgayAnHoi) item.trangPhucChuReNgayAnHoi = dichVuGoc.trangPhucChuReNgayAnHoi || "";
-            if (!item.trangPhucVayCuoiNgayCuoi) item.trangPhucVayCuoiNgayCuoi = dichVuGoc.trangPhucVayCuoiNgayCuoi || "";
-            if (!item.trangPhucVestChuReNgayCuoi) item.trangPhucVestChuReNgayCuoi = dichVuGoc.trangPhucVestChuReNgayCuoi || "";
-            if (!item.hoaCamTay) item.hoaCamTay = dichVuGoc.hoaCamTay || "";
-            if (!item.detailsSnapshot && dichVuGoc.details) {
-              item.detailsSnapshot = JSON.parse(JSON.stringify(dichVuGoc.details));
-            }
+            snapshotContractPackage(item, dichVuGoc);
           }
         }
 
-        const soLuong = Number(item.soLuong) || 0;
+        const soLuong = Math.max(1, Number(item.soLuong) || 1);
         const donGia = Number(item.donGia) || 0;
-        const giamGiaDichVu = Number(item.giamGiaDichVu) || 0;
+        const giamGiaDichVu = Math.max(0, Number(item.giamGiaDichVu) || 0);
         item.thanhTien = Math.max(0, (soLuong * donGia) - giamGiaDichVu);
-        
-        tongChuaGiam += item.thanhTien;
       }
     }
 
-    // 1.1 Tính phụ lục phát sinh (Add-on / Upsell)
-    let tongPhatSinh = 0;
-    if (this.phuLucPhatSinh && this.phuLucPhatSinh.length > 0) {
-      for (let addon of this.phuLucPhatSinh) {
-        const sl = Number(addon.soLuong) || 1;
-        const dg = Number(addon.donGia) || 0;
-        addon.thanhTien = Math.max(0, sl * dg);
-        tongPhatSinh += addon.thanhTien;
-      }
-    }
-    this.thanhToan.tongPhatSinh = tongPhatSinh;
-    tongChuaGiam += tongPhatSinh;
-
-    // Gán tổng giá trị gốc (giữ lại tongGiaTri nếu giỏ hàng rỗng nhưng đã nhập tổng tiền trực tiếp)
-    if (tongChuaGiam === 0 && (!this.gioHang || this.gioHang.length === 0) && Number(this.thanhToan.tongGiaTri) > 0) {
-      tongChuaGiam = Number(this.thanhToan.tongGiaTri);
-    } else {
-      this.thanhToan.tongGiaTri = tongChuaGiam;
+    // 2. Snapshot gói chính (packageSnapshot) nếu chưa có
+    if (!this.packageSnapshot && this.gioHang && this.gioHang.length > 0) {
+      const primaryItem = this.gioHang[0];
+      this.packageSnapshot = {
+        packageName: primaryItem.tenDichVuSnapshot || "",
+        unitPrice: primaryItem.donGia || 0,
+        deliverables: primaryItem.detailsSnapshot?.deliverables || [],
+        photoSchedules: primaryItem.detailsSnapshot?.photoSchedules || [],
+        makeupSessions: primaryItem.detailsSnapshot?.makeupSessions || [],
+        wardrobe: primaryItem.detailsSnapshot?.wardrobe || [],
+        snapshotAt: this.ngayHopDong || new Date()
+      };
     }
 
-    // 2. Logic Giảm Giá
-    const giamGiaValue = Number(this.thanhToan.giamGia) || 0;
-    const loaiGiamGia = this.thanhToan.loaiGiamGia;
-    const voucherGiamGia = Number(this.thanhToan.voucherGiamGia) || 0;
-
-    let soTienDuocGiam = 0;
-    if (loaiGiamGia === 1) {
-      soTienDuocGiam = (tongChuaGiam * giamGiaValue) / 100;
-    } else {
-      soTienDuocGiam = giamGiaValue;
-    }
-    soTienDuocGiam += voucherGiamGia;
-
-    // 3. Tính tổng giá trị sau khi giảm
-    const ketQua = tongChuaGiam - soTienDuocGiam;
-    this.thanhToan.tongGiaTriSauGiam = Math.max(0, ketQua);
-
-    // 4. Tính tổng khách hàng đã thanh toán
-    if (this.thanhToan.cacLuotThanhToan && this.thanhToan.cacLuotThanhToan.length > 0) {
-      this.thanhToan.khachHangDaThanhToan = this.thanhToan.cacLuotThanhToan.reduce((total, p) => total + (Number(p.amount) || 0), 0);
-    } else {
-      this.thanhToan.khachHangDaThanhToan = this.thanhToan.khachHangDaThanhToan || 0;
-    }
-
-    // 5. Tính tổng tiền còn lại
-    const tongSauGiam = this.thanhToan.tongGiaTriSauGiam || 0;
-    const daThanhToan = this.thanhToan.khachHangDaThanhToan || 0;
-    this.thanhToan.conLai = Math.max(0, tongSauGiam - daThanhToan);
-
-    // 6. Tính % đã thanh toán
-    if (tongSauGiam > 0) {
-      const pt = (daThanhToan / tongSauGiam) * 100;
-      this.thanhToan.phanTramDaThanhToan = Math.min(100, Math.max(0, Math.round(pt * 10) / 10));
-    } else {
-      this.thanhToan.phanTramDaThanhToan = daThanhToan > 0 ? 100 : 0;
-    }
-
-    // 7. Cập nhật trạng thái thanh toán
-    if (this.thanhToan.conLai <= 0 && (daThanhToan > 0 || tongSauGiam === 0)) {
-      this.thanhToan.trangThaiThanhToan = "Đã thanh toán đủ";
-    } else if (daThanhToan > 0) {
-      this.thanhToan.trangThaiThanhToan = "Đang thanh toán";
-    } else {
-      this.thanhToan.trangThaiThanhToan = "Chưa thanh toán";
-    }
+    // 3. Tính toán toàn bộ thông số giá và công nợ thống nhất
+    applyPricingToContract(this);
 
     next();
   } catch (error) {

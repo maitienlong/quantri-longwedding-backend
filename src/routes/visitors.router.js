@@ -238,7 +238,7 @@ router.get('/map-locations', async (req, res) => {
 });
 
 // Endpoint for visitor IP access logs
-router.get('/logs', async (req, res) => {
+router.get('/logs', authMiddleware, checkRole(["Quản lý"]), async (req, res) => {
     try {
         const logs = await VisitorLog.find().sort({ lastSeen: -1 }).limit(1000);
         const data = logs.map(log => ({
@@ -283,7 +283,7 @@ router.get('/active', (req, res) => {
 });
 
 // Get blocked IPs
-router.get('/blocked', async (req, res) => {
+router.get('/blocked', authMiddleware, checkRole(["Quản lý"]), async (req, res) => {
     try {
         const blockedList = await BlockedIP.find().sort({ blockedAt: -1 });
         res.json({ status: 'success', data: blockedList });

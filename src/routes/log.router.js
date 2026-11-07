@@ -5,7 +5,7 @@ const authMiddleware = require('../middleware/auth.middleware');
 const checkRole = require('../middleware/role.middleware');
 
 // POST /api/log - Create a new log
-router.post('/', async (req, res) => {
+router.post('/', authMiddleware, async (req, res) => {
     try {
         const { action, user, details } = req.body;
         

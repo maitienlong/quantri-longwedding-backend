@@ -3,10 +3,11 @@ const router = express.Router();
 const hopDongService = require("../services/hopDong.service.js");
 const authMiddleware = require("../middleware/auth.middleware");
 const checkRole = require("../middleware/role.middleware");
+const { requirePermission, requireAnyPermission } = require("../middleware/permission.middleware");
 
-router.post("/create", authMiddleware, hopDongService.create);
-router.post("/update", authMiddleware, hopDongService.update);
-router.post("/pay", authMiddleware, hopDongService.pay);
+router.post("/create", authMiddleware, requirePermission("banhang"), hopDongService.create);
+router.post("/update", authMiddleware, requirePermission("banhang"), hopDongService.update);
+router.post("/pay", authMiddleware, requireAnyPermission(["banhang", "quanlychitieu"]), hopDongService.pay);
 router.post("/remove", authMiddleware, checkRole(["Quản lý"]), hopDongService.remove);
 router.post("/update-progress", authMiddleware, hopDongService.updateProgress);
 router.post("/list", authMiddleware, hopDongService.list);
@@ -20,5 +21,6 @@ router.post("/add-addon", authMiddleware, hopDongService.addAddonItem);
 router.post("/update-audit", authMiddleware, hopDongService.updateWithAudit);
 router.get("/reminders", authMiddleware, hopDongService.getReminders);
 router.post("/reminders", authMiddleware, hopDongService.getReminders);
+router.post("/reconcile-payments", authMiddleware, checkRole(["Quản lý"]), hopDongService.reconcilePaymentsEndpoint);
 
 module.exports = router;

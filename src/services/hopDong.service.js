@@ -6,6 +6,9 @@ const Album = require("../models/album.model");
 const { success, error } = require("../utils/response");
 const { createLog } = require("../utils/logger");
 const { getICTDateTimeString, formatICTDateTime } = require("../utils/dateUtils");
+const { validateTransition, normalizeSubStage, STAGE_NAMES, SUB_STAGE_NAMES } = require("./contractStateMachine");
+const { calculateContractPricing } = require("./contractPricing");
+const bookingService = require("./booking.service");
 
 // Đảm bảo thông tin thanh toán có đầy đủ phanTramDaThanhToan và trangThaiThanhToan chuẩn xác
 function ensurePaymentProgress(contract) {
@@ -13,69 +16,17 @@ function ensurePaymentProgress(contract) {
     const doc = typeof contract.toObject === 'function' ? contract.toObject() : contract;
     if (!doc.thanhToan) doc.thanhToan = {};
 
-    const tt = doc.thanhToan;
-
-    // 1. Tính tổng gốc từ giỏ hàng nếu có (đã trừ giảm giá từng dịch vụ giamGiaDichVu)
-    let tongGoc = 0;
-    if (Array.isArray(doc.gioHang) && doc.gioHang.length > 0) {
-        tongGoc = doc.gioHang.reduce((sum, item) => {
-            const donGia = parseFloat(item.donGia?.toString().replace(/[^0-9.-]+/g, "") || item.giaChoThueDichVu?.toString().replace(/[^0-9.-]+/g, "") || 0);
-            const soLuong = Number(item.soLuong) || 1;
-            const giamGiaDichVu = Number(item.giamGiaDichVu) || 0;
-            const thanhTien = Math.max(0, (donGia * soLuong) - giamGiaDichVu);
-            return sum + thanhTien;
-        }, 0);
-    } else {
-        tongGoc = Number(tt.tongGiaTri ?? 0);
+    const calc = calculateContractPricing(doc);
+    if (calc) {
+        doc.thanhToan.tongGiaTri = calc.tongGiaTri;
+        doc.thanhToan.tongPhatSinh = calc.tongPhatSinh;
+        doc.thanhToan.tongGiaTriSauGiam = calc.tongGiaTriSauGiam;
+        doc.thanhToan.khachHangDaThanhToan = calc.khachHangDaThanhToan;
+        doc.thanhToan.conLai = calc.conLai;
+        doc.thanhToan.phanTramDaThanhToan = calc.phanTramDaThanhToan;
+        doc.thanhToan.trangThaiThanhToan = calc.trangThaiThanhToan;
     }
 
-    // 2. Tính tổng sau khi trừ giảm giá của cả hợp đồng
-    const giamGiaValue = Number(tt.giamGia) || 0;
-    const loaiGiamGia = Number(tt.loaiGiamGia) || 0;
-    const voucherGiamGia = Number(tt.voucherGiamGia) || 0;
-    let tongSauGiam = tongGoc;
-    if (loaiGiamGia === 1) {
-        tongSauGiam = tongGoc - (tongGoc * giamGiaValue / 100);
-    } else {
-        tongSauGiam = tongGoc - giamGiaValue;
-    }
-    tongSauGiam = tongSauGiam - voucherGiamGia;
-    tongSauGiam = Math.max(0, tongSauGiam);
-
-    // 3. Tính số tiền khách hàng đã thanh toán
-    const paid = Number(
-        Array.isArray(tt.cacLuotThanhToan) && tt.cacLuotThanhToan.length > 0
-            ? tt.cacLuotThanhToan.reduce((s, p) => s + (Number(p.amount) || 0), 0)
-            : (tt.khachHangDaThanhToan ?? 0)
-    );
-
-    // 4. Số tiền còn lại
-    const conLai = Math.max(0, tongSauGiam - paid);
-
-    // 5. Phần trăm đã thanh toán (%)
-    let phanTram = 0;
-    if (tongSauGiam > 0) {
-        phanTram = Math.min(100, Math.max(0, Math.round((paid / tongSauGiam) * 100 * 10) / 10));
-    } else {
-        phanTram = paid > 0 ? 100 : 0;
-    }
-
-    // 6. Trạng thái thanh toán
-    let status = "";
-    if (conLai <= 0 && (paid > 0 || tongSauGiam === 0)) {
-        status = "Đã thanh toán đủ";
-    } else if (paid > 0) {
-        status = `Đã cọc ${phanTram}%`;
-    } else {
-        status = "Chưa thanh toán";
-    }
-
-    tt.tongGiaTri = tongGoc;
-    tt.tongGiaTriSauGiam = tongSauGiam;
-    tt.khachHangDaThanhToan = paid;
-    tt.conLai = conLai;
-    tt.phanTramDaThanhToan = phanTram;
-    tt.trangThaiThanhToan = status;
     return doc;
 }
 
@@ -96,6 +47,7 @@ async function create(req, res) {
                 req.body.nguoiPhucVu.thoChupHinh = "";
                 req.body.nguoiPhucVu.thoMakeUp = "";
                 req.body.nguoiPhucVu.thoChinhAnh = "";
+                req.body.nguoiPhucVu.thoQuayPhim = "";
             }
             if (Array.isArray(req.body.serviceSchedules)) {
                 req.body.serviceSchedules.forEach(s => { s.nhanVien = ""; });
@@ -105,6 +57,9 @@ async function create(req, res) {
             }
             if (Array.isArray(req.body.lichTrangDiem)) {
                 req.body.lichTrangDiem.forEach(s => { s.thoMakeUp = ""; s.nhanVien = ""; });
+            }
+            if (Array.isArray(req.body.lichQuayPhim)) {
+                req.body.lichQuayPhim.forEach(s => { s.thoQuayPhim = ""; s.nhanVien = ""; });
             }
         }
         // Kiểm tra trùng lịch chụp hình (khoảng cách dưới 3 tiếng)
@@ -152,8 +107,12 @@ async function create(req, res) {
             }],
             dichVuChinh: req.body.dichVuChinh,
             isSpecialCollection: req.body.isSpecialCollection || false,
+            linkAnhGoc: req.body.linkAnhGoc || "",
+            linkAnhChinhSua: req.body.linkAnhChinhSua || "",
+            extraDriveLinks: Array.isArray(req.body.extraDriveLinks) ? req.body.extraDriveLinks : [],
             lichTrangDiem: req.body.lichTrangDiem || [],
             lichChup: req.body.lichChup || [],
+            lichQuayPhim: req.body.lichQuayPhim || [],
             serviceSchedules: req.body.serviceSchedules || []
         });
 
@@ -274,7 +233,7 @@ async function create(req, res) {
 
 async function update(req, res) {
     try {
-        const { maHopDong, gioHang, thanhToan, nguoiPhucVu, giaiDoan, subGiaiDoan, cacNgay, linkAnhGoc, linkAnhChinhSua, danhSachAnhIn, isSpecialCollection, lichTrangDiem, lichChup, serviceSchedules, dichVuChinh, auditLog, newAuditEntry } = req.body;
+        const { maHopDong, gioHang, thanhToan, nguoiPhucVu, giaiDoan, subGiaiDoan, cacNgay, linkAnhGoc, linkAnhChinhSua, extraDriveLinks, danhSachAnhIn, isSpecialCollection, lichTrangDiem, lichChup, lichQuayPhim, serviceSchedules, dichVuChinh, auditLog, newAuditEntry } = req.body;
         const hopDong = await HopDong.findOne({ maHopDong });
         if (!hopDong) return error(res, "Không tìm thấy hợp đồng");
 
@@ -283,6 +242,7 @@ async function update(req, res) {
         if (isSpecialCollection !== undefined) hopDong.isSpecialCollection = isSpecialCollection;
         if (lichTrangDiem !== undefined) hopDong.lichTrangDiem = lichTrangDiem;
         if (lichChup !== undefined) hopDong.lichChup = lichChup;
+        if (lichQuayPhim !== undefined) hopDong.lichQuayPhim = lichQuayPhim;
         if (serviceSchedules !== undefined) hopDong.serviceSchedules = serviceSchedules;
         if (gioHang !== undefined) {
             hopDong.gioHang = Array.isArray(gioHang) ? gioHang.map(item => {
@@ -320,6 +280,16 @@ async function update(req, res) {
         );
 
         if (nguoiPhucVu !== undefined) {
+            const isAttemptingToChangeCrew = (
+                (nguoiPhucVu.thoChupHinh !== undefined && nguoiPhucVu.thoChupHinh !== (hopDong.nguoiPhucVu?.thoChupHinh || "")) ||
+                (nguoiPhucVu.thoMakeUp !== undefined && nguoiPhucVu.thoMakeUp !== (hopDong.nguoiPhucVu?.thoMakeUp || "")) ||
+                (nguoiPhucVu.thoChinhAnh !== undefined && nguoiPhucVu.thoChinhAnh !== (hopDong.nguoiPhucVu?.thoChinhAnh || ""))
+            );
+
+            if (!hasAssignCrewPerm && isAttemptingToChangeCrew) {
+                return error(res, "Bạn không có quyền phân công hoặc thay đổi thợ & ekip (Yêu cầu quyền: phan-cong-tho)", 403);
+            }
+
             if (!hasAssignCrewPerm && hopDong.nguoiPhucVu) {
                 // Bảo lưu nhân sự thợ cũ nếu tài khoản không có quyền phân công thợ
                 hopDong.nguoiPhucVu = {
@@ -401,6 +371,7 @@ async function update(req, res) {
 
         if (linkAnhGoc !== undefined) hopDong.linkAnhGoc = linkAnhGoc;
         if (linkAnhChinhSua !== undefined) hopDong.linkAnhChinhSua = linkAnhChinhSua;
+        if (extraDriveLinks !== undefined) hopDong.extraDriveLinks = extraDriveLinks;
         if (danhSachAnhIn !== undefined) hopDong.danhSachAnhIn = danhSachAnhIn;
 
         if (thanhToan !== undefined || gioHang !== undefined) {
@@ -503,6 +474,15 @@ async function update(req, res) {
 
         await hopDong.save();
 
+        // Tự động đồng bộ lịch sang Booking service
+        if (lichChup !== undefined || lichTrangDiem !== undefined || serviceSchedules !== undefined || cacNgay !== undefined) {
+            try {
+                await bookingService.syncContractToBookings(hopDong, req.user?.fullname || "Hệ thống");
+            } catch (syncErr) {
+                console.warn("[Booking Sync Warning]:", syncErr.message);
+            }
+        }
+
         createLog({
             action: `Cập nhật hợp đồng (${maHopDong})`,
             user: req.user?.fullname || "Nhân viên",
@@ -593,15 +573,63 @@ async function remove(req, res) {
 
 async function pay(req, res) {
     try {
-        const HopDong = await HopDong.find();
-        return {
-            success: true, data: {
-                count: HopDong.length,
-                HopDong
-            }
-        };
+        const { maHopDong, amount, method, noiDung } = req.body;
+        if (!maHopDong) return error(res, "Thiếu mã hợp đồng", 400);
+        const payAmount = Number(amount);
+        if (isNaN(payAmount) || payAmount <= 0) return error(res, "Số tiền không hợp lệ", 400);
+
+        const hopDong = await HopDong.findOne({ maHopDong });
+        if (!hopDong) return error(res, "Không tìm thấy hợp đồng", 404);
+
+        const paymentId = `PAY-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
+        const pMethod = method || "Tiền mặt";
+        const pProvider = pMethod === "Chuyển khoản" ? "MANUAL_TRANSFER" : (pMethod === "SePay" ? "SEPAY" : "CASH");
+
+        const newPayment = new Payment({
+            id: paymentId,
+            provider: pProvider,
+            providerTransactionId: paymentId,
+            maHopDong: hopDong.maHopDong,
+            hopDongId: hopDong._id,
+            khachHangId: hopDong.khachHang1?._id || hopDong.khachHang1,
+            khachHang: hopDong.khachHang1?.tenKhachHang || "Khách hàng",
+            amount: payAmount,
+            date: new Date(),
+            method: pMethod,
+            noiDung: noiDung || `Thanh toán hợp đồng ${hopDong.maHopDong}`,
+            status: "SUCCESS"
+        });
+        await newPayment.save();
+
+        if (!hopDong.thanhToan) hopDong.thanhToan = {};
+        if (!Array.isArray(hopDong.thanhToan.cacLuotThanhToan)) {
+            hopDong.thanhToan.cacLuotThanhToan = [];
+        }
+
+        hopDong.thanhToan.cacLuotThanhToan.push({
+            id: paymentId,
+            amount: payAmount,
+            date: new Date(),
+            method: pMethod,
+            noiDung: noiDung || `Thanh toán hợp đồng ${hopDong.maHopDong}`
+        });
+
+        ensurePaymentProgress(hopDong);
+        await hopDong.save();
+
+        createLog({
+            action: `Thanh toán hợp đồng (${maHopDong})`,
+            user: req.user?.fullname || "Nhân viên",
+            req,
+            details: { maHopDong, amount: payAmount, method: pMethod }
+        });
+
+        return success(res, "Thanh toán thành công", {
+            paymentId,
+            thanhToan: hopDong.thanhToan
+        });
     } catch (err) {
-        return error(res, err.message);
+        return error(res, err.message, 500);
     }
 }
 
@@ -803,6 +831,27 @@ async function list(req, res) {
                         ]
                     };
                 }
+            } else if (dateField === 'quayPhim' || dateField === 'cacNgay.ngayQuayPhim') {
+                if (filter && filter !== 'all') {
+                    const range = getICTDateRange(filter);
+                    if (range) {
+                        dateConditions = {
+                            $or: [
+                                { 'cacNgay.ngayQuayPhim': { $gte: range.start, $lt: range.end } },
+                                { 'lichQuayPhim.ngayGio': { $gte: range.start, $lt: range.end } },
+                                { 'serviceSchedules.ngayGio': { $gte: range.start.toISOString().slice(0, 10), $lte: range.end.toISOString() } }
+                            ]
+                        };
+                    }
+                } else {
+                    dateConditions = {
+                        $or: [
+                            { 'cacNgay.ngayQuayPhim': { $exists: true, $ne: null } },
+                            { 'serviceSchedules.serviceType': 'video' },
+                            { 'lichQuayPhim.0': { $exists: true } }
+                        ]
+                    };
+                }
             } else if (dateField === 'tongHop') {
                 if (filter && filter !== 'all') {
                     const range = getICTDateRange(filter);
@@ -811,6 +860,7 @@ async function list(req, res) {
                             $or: [
                                 { 'cacNgay.ngayChup': { $gte: range.start, $lt: range.end } },
                                 { 'cacNgay.ngayTrangDiem': { $gte: range.start, $lt: range.end } },
+                                { 'cacNgay.ngayQuayPhim': { $gte: range.start, $lt: range.end } },
                                 { 'cacNgay.ngayChinhAnh': { $gte: range.start, $lt: range.end } },
                                 { 'cacNgay.ngayTraAnh': { $gte: range.start, $lt: range.end } },
                                 { 'cacNgay.ngayAnHoi': { $gte: range.start, $lt: range.end } },
@@ -896,6 +946,7 @@ async function list(req, res) {
 
         // ==========================================
         // SỬ DỤNG .POPULATE() ĐỂ LẤY THÔNG TIN
+        // HỖ TRỢ PHÂN TRANG (PAGE & LIMIT)
         // ==========================================
         let sortQuery = { ngayHopDong: -1 };
         if (isCalendar) {
@@ -903,6 +954,8 @@ async function list(req, res) {
                 sortQuery = { 'cacNgay.ngayAnHoi': 1, 'cacNgay.ngayCuoi': 1 };
             } else if (dateField === 'makeUp' || dateField === 'makeup' || dateField === 'cacNgay.ngayTrangDiem') {
                 sortQuery = { 'cacNgay.ngayTrangDiem': 1 };
+            } else if (dateField === 'quayPhim' || dateField === 'cacNgay.ngayQuayPhim') {
+                sortQuery = { 'cacNgay.ngayQuayPhim': 1 };
             } else if (dateField === 'tongHop') {
                 sortQuery = { ngayHopDong: -1 };
             } else {
@@ -910,7 +963,10 @@ async function list(req, res) {
             }
         }
 
-        const hopDong = await HopDong.find(query)
+        const page = Math.max(1, parseInt(req.body.page || req.query.page) || 1);
+        const limit = Math.max(0, parseInt(req.body.limit || req.query.limit) || 0);
+
+        let hopDongQuery = HopDong.find(query)
             .populate({
                 path: 'khachHang1',      // Tên trường chứa ObjectId của khách hàng 1
                 select: 'tenKhachHang soDienThoai diaChi facebookId' // Chỉ định các trường muốn lấy
@@ -925,13 +981,33 @@ async function list(req, res) {
             })
             .sort(sortQuery);
 
+        let totalCount = 0;
+        let hasMore = false;
+        let totalPages = 1;
+
+        if (limit > 0) {
+            totalCount = await HopDong.countDocuments(query);
+            hopDongQuery = hopDongQuery.skip((page - 1) * limit).limit(limit);
+            totalPages = Math.ceil(totalCount / limit);
+            hasMore = (page * limit) < totalCount;
+        }
+
+        const hopDong = await hopDongQuery;
         const formattedList = hopDong.map(h => sanitizeContractForRole(ensurePaymentProgress(h), req.user));
+
+        if (limit === 0) {
+            totalCount = formattedList.length;
+        }
 
         return success(res, "Tải dữ liệu thành công !", {
             filter: filter || "all",
             status: status || "all",
             keyword: keyword || "",
-            count: formattedList.length,
+            count: totalCount,
+            page: page,
+            limit: limit,
+            totalPages: totalPages,
+            hasMore: hasMore,
             hopDong: formattedList
         });
     } catch (err) {
@@ -1048,6 +1124,26 @@ async function updateProgress(req, res) {
             return error(res, "Giai đoạn không hợp lệ (quy trình gồm 4 giai đoạn: 1. Chụp hình, 2. Hậu kỳ, 3. In ảnh, 4. Hoàn thành)");
         }
 
+        const transitionCheck = await validateTransition({
+            contract: hopDong,
+            album: null,
+            nextStage,
+            nextSubStage,
+            user: req.user,
+            data: data || {},
+            forceOverride: Boolean(req.body?.forceOverride)
+        });
+
+        if (!transitionCheck.valid) {
+            return error(res, transitionCheck.error || "Chuyển giai đoạn không hợp lệ", 400);
+        }
+
+        if (!hopDong.thoiGianChuyenGiaiDoan) hopDong.thoiGianChuyenGiaiDoan = {};
+        const stageTimeKeys = { 1: "chupHinh", 2: "hauKy", 3: "inAnh", 4: "hoanThanh" };
+        if (stageTimeKeys[nextStage]) {
+            hopDong.thoiGianChuyenGiaiDoan[stageTimeKeys[nextStage]] = new Date();
+        }
+
         // Cập nhật dữ liệu tương ứng nếu có
         if (data) {
             if (data.linkAnhGoc !== undefined) {
@@ -1141,7 +1237,21 @@ async function updateProgress(req, res) {
 
         hopDong.giaiDoan = nextStage;
         hopDong.subGiaiDoan = nextSubStage;
+        hopDong.thoiGianChuyenGiaiDoan = new Date();
         await hopDong.save();
+
+        try {
+            const workflowEngine = require("./workflowEngine");
+            await workflowEngine.onContractStageTransition({
+                contract: hopDong,
+                previousStage: stageChanged ? hopDong.giaiDoan : nextStage,
+                nextStage,
+                nextSubStage,
+                performedBy: performerName
+            });
+        } catch (wfErr) {
+            console.warn("[Workflow Engine Warning]:", wfErr.message);
+        }
 
         const msg = `Cập nhật tiến trình: ${stageNames[nextStage] || nextStage}${subLabel} thành công!`;
         return success(res, msg, hopDong);
@@ -1682,6 +1792,25 @@ async function getReminders(req, res) {
 }
 
 
+
+async function reconcilePaymentsEndpoint(req, res) {
+    try {
+        const { reconcilePayments } = require("./reconciliation.service");
+        const dryRun = req.body?.dryRun !== false && req.body?.dryRun !== "false";
+        const contractCode = req.body?.contractCode || req.query?.contractCode || null;
+
+        const result = await reconcilePayments({
+            dryRun,
+            contractCode,
+            req
+        });
+
+        return success(res, dryRun ? "Kiểm tra đối soát thành công (Dry-run)" : "Đồng bộ sổ cái thành công (Apply)", result);
+    } catch (err) {
+        return error(res, "Lỗi khi đối soát sổ cái: " + err.message);
+    }
+}
+
 module.exports = {
     updatePostProduction,
     addAddonItem,
@@ -1695,5 +1824,7 @@ module.exports = {
     search,
     updateProgress,
     getCustomerContracts,
-    customerApproveAlbum
+    customerApproveAlbum,
+    reconcilePaymentsEndpoint,
+    ensurePaymentProgress
 };

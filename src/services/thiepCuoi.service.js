@@ -264,6 +264,33 @@ exports.saveInvitation = async (req, res) => {
             return error(res, "Bắt buộc phải đăng nhập tài khoản khách hàng để lưu thiệp cưới!", 401);
         }
 
+        // MOD-11: Owner Policy check when updating existing invitation
+        if (data.invitationId) {
+            const existing = await ThiepCuoi.findOne({ invitationId: data.invitationId });
+            if (existing) {
+                const role = req.user?.positon || req.user?.role;
+                const isManager = req.user?.username === 'along' || role === 'Quản lý' || role === 'Admin' || role === 'Quản trị viên' || req.user?.permission === 1;
+                const userIdStr = String(req.user?.id || req.user?._id || '');
+                const username = String(req.user?.username || '');
+                const cId = String(req.user?.customerId || '');
+                const isOwner = (
+                    (existing.createdBy && String(existing.createdBy) === userIdStr) ||
+                    (existing.creator && existing.creator.toLowerCase() === username.toLowerCase()) ||
+                    (existing.khachHangId && (String(existing.khachHangId) === cId || String(existing.khachHangId) === userIdStr)) ||
+                    (existing.customerId && (String(existing.customerId) === cId || String(existing.customerId) === userIdStr || String(existing.customerId) === username))
+                );
+                if (!isManager && !isOwner) {
+                    return error(res, "Bạn không có quyền chỉnh sửa thiệp cưới của khách hàng khác (Owner Policy)", 403);
+                }
+            }
+        }
+
+        if (!data.createdBy && req.user) {
+            data.createdBy = req.user.id || req.user._id;
+            data.creator = req.user.username || "Client";
+        }
+        data.customerId = String(customerId);
+
         // Kiểm tra điều kiện đơn hàng có dịch vụ thiệp mời online cùng mã loại thiệp
         const templateId = data.templateId || data.themeId;
         const eligibility = await validateCustomerInvitationEligibility(customerId, templateId);

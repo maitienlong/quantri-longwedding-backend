@@ -84,6 +84,11 @@ const donViNhanTienRoutes = require("./routes/donViNhanTien.router");
 const voucherRoutes = require("./routes/voucher.router");
 const trangPhucRoutes = require("./routes/trangPhuc.router");
 const leadRoutes = require("./routes/lead.router");
+const bookingRoutes = require("./routes/booking.router");
+const wardrobeRoutes = require("./routes/wardrobe.router");
+const taskRoutes = require("./routes/task.router");
+const printDeliverableRoutes = require("./routes/printDeliverable.router");
+const financialLedgerRoutes = require("./routes/financialLedger.router");
 
 app.use('/auth', authRoutes);
 app.use('/khachHang', khachHangRoutes);
@@ -108,6 +113,8 @@ app.use('/thiep-cuoi', thiepCuoiRoutes);
 const thiepCuoiService = require("./services/thiepCuoi.service");
 app.get(['/t/:id', '/t/:id/:guestSlug', '/moi/:id', '/moi/:id/:guestSlug', '/p/:id', '/p/:id/:guestSlug', '/thiep/:id', '/thiep/:id/:guestSlug'], thiepCuoiService.getInvitationShareSeo);
 app.use('/api/album', albumRoutes);
+app.use('/api/v2/albums', albumRoutes);
+app.use('/api/v2/portal/albums', albumRoutes);
 app.use('/api/log', logRoutes);
 app.use('/api/visitors', visitorsRoutes);
 app.use('/api/vouchers', voucherRoutes);
@@ -116,6 +123,17 @@ app.use('/api/trang-phuc', trangPhucRoutes);
 app.use('/trangPhuc', trangPhucRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/leads', leadRoutes);
+app.use('/api/v2/bookings', bookingRoutes);
+app.use('/api/bookings', bookingRoutes);
+app.use('/api/v2/wardrobe', wardrobeRoutes);
+app.use('/api/wardrobe', wardrobeRoutes);
+app.use('/api/v2/tasks', taskRoutes);
+app.use('/api/tasks', taskRoutes);
+app.use('/api/v2/notifications', taskRoutes);
+app.use('/api/v2/print-deliverables', printDeliverableRoutes);
+app.use('/api/print-deliverables', printDeliverableRoutes);
+app.use('/api/v2/finance', financialLedgerRoutes);
+app.use('/api/finance', financialLedgerRoutes);
 
 app.get("/", (req, res) => {
   res.send("API is running... " + process.env.VERSION);

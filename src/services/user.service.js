@@ -1,5 +1,6 @@
 const User = require("../models/user.model");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const { success, error } = require("../utils/response");
 const { createLog } = require("../utils/logger");
 
@@ -56,8 +57,7 @@ async function updateUser(req, res) {
                 isManager = requester.positon === "Quản lý" || 
                             requester.positon === "Admin" || 
                             requester.positon === "Quản trị viên" || 
-                            requester.permission === 1 || 
-                            requester.username === "along";
+                            requester.permission === 1;
             }
         }
 
@@ -181,15 +181,26 @@ async function loginUser(req, res) {
             return error(res, "Mật khẩu không chính xác!", 400);
         }
 
-        // 3. Tạo JWT token
+        // 3. Tạo JWT access token có hạn ngắn (24h khi ghi nhớ, 2h khi không ghi nhớ)
         const isRemember = req.body?.remember !== false && req.body?.remember !== "false";
-        const signOptions = isRemember ? { expiresIn: "36500d" } : { expiresIn: "365d" };
+        const expiresIn = isRemember ? (process.env.ACCESS_TOKEN_EXPIRES_IN || "24h") : "2h";
+        const expiresInSeconds = isRemember ? 86400 : 7200;
 
-        const token = jwt.sign(
-            { username: user.username, fullname: user.fullname, positon: user.positon, permission: user.permission, permissions: user.permissions || [], isRemember },
-            process.env.JWT_SECRET,
-            signOptions
-        );
+        const tokenPayload = {
+            username: user.username,
+            fullname: user.fullname,
+            positon: user.positon,
+            permission: user.permission,
+            permissions: user.permissions || [],
+            tokenVersion: user.tokenVersion || 0,
+            isRemember
+        };
+
+        const accessToken = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn });
+
+        // 4. Sinh rotating Refresh Token bảo mật lưu hash trong DB
+        const refreshTokenVal = user.createRefreshToken(isRemember ? 30 : 7);
+        await user.save();
 
         createLog({
             action: "Đăng nhập hệ thống",
@@ -199,7 +210,10 @@ async function loginUser(req, res) {
         });
 
         return success(res, "Đăng nhập thành công!", {
-            token: token,
+            token: accessToken, // Giữ trường token để tương thích ngược 100% với axiosClient v1
+            accessToken: accessToken,
+            refreshToken: refreshTokenVal,
+            expiresIn: expiresInSeconds,
             username: user.username,
             fullname: user.fullname,
             birthday: user.birthday,
@@ -217,30 +231,88 @@ async function loginUser(req, res) {
 
 async function refreshToken(req, res) {
     try {
-        const authHeader = req.headers["authorization"];
-        const oldToken = req.body?.token || (authHeader && authHeader.split(" ")[1]);
-        if (!oldToken) {
+        const rawRefreshToken = req.body?.refreshToken;
+        const authHeader = req.headers?.["authorization"] || req.headers?.authorization;
+        const legacyToken = req.body?.token || (authHeader && authHeader.split(" ")[1]);
+
+        let user = null;
+        let isRemember = true;
+
+        if (rawRefreshToken) {
+            // Chuẩn v2: Sử dụng rotating Refresh Token bảo mật
+            const tokenHash = crypto.createHash("sha256").update(rawRefreshToken).digest("hex");
+            user = await User.findOne({
+                "refreshTokens.tokenHash": tokenHash,
+                "refreshTokens.expiresAt": { $gt: new Date() }
+            });
+
+            if (!user) {
+                return error(res, "Refresh token không hợp lệ hoặc đã hết hạn", 401);
+            }
+
+            // Thu hồi token cũ (loại bỏ token đã dùng khỏi mảng)
+            user.refreshTokens = (user.refreshTokens || []).filter(t => t.tokenHash !== tokenHash);
+        } else if (legacyToken) {
+            // Chế độ tương thích ngược v1: Client cũ gửi { token }
+            let decoded;
+            try {
+                decoded = jwt.verify(legacyToken, process.env.JWT_SECRET, { ignoreExpiration: true });
+            } catch (jwtErr) {
+                return error(res, "Token v1 không hợp lệ", 401);
+            }
+
+            if (!decoded || !decoded.username) {
+                return error(res, "Token không hợp lệ", 401);
+            }
+
+            // Giới hạn an toàn: không cấp mới nếu token đã được cấp trước đó quá 30 ngày
+            const nowSeconds = Math.floor(Date.now() / 1000);
+            if (decoded.iat && (nowSeconds - decoded.iat > 30 * 24 * 3600)) {
+                return error(res, "Phiên đăng nhập đã quá hạn tối đa, vui lòng đăng nhập lại", 401);
+            }
+
+            user = await User.findOne({ username: decoded.username });
+            if (!user) {
+                return error(res, "Tài khoản không còn tồn tại trên hệ thống", 401);
+            }
+
+            // Kiểm tra tokenVersion nếu có trong payload
+            if (decoded.tokenVersion !== undefined && user.tokenVersion !== undefined && decoded.tokenVersion !== user.tokenVersion) {
+                return error(res, "Phiên đăng nhập đã bị thu hồi", 401);
+            }
+
+            isRemember = decoded.isRemember !== false;
+        } else {
             return error(res, "Không tìm thấy token để gia hạn", 401);
         }
 
-        const decoded = jwt.verify(oldToken, process.env.JWT_SECRET, { ignoreExpiration: true });
-        if (!decoded || !decoded.username) {
-            return error(res, "Token không hợp lệ", 401);
-        }
+        // Tạo access token mới với hạn ngắn
+        const expiresIn = isRemember ? (process.env.ACCESS_TOKEN_EXPIRES_IN || "24h") : "2h";
+        const expiresInSeconds = isRemember ? 86400 : 7200;
 
-        const user = await User.findOne({ username: decoded.username });
-        if (!user) {
-            return error(res, "Tài khoản không còn tồn tại trên hệ thống", 401);
-        }
-
-        const newToken = jwt.sign(
-            { username: user.username, fullname: user.fullname, positon: user.positon, permission: user.permission, permissions: user.permissions || [], isRemember: true },
+        const newAccessToken = jwt.sign(
+            {
+                username: user.username,
+                fullname: user.fullname,
+                positon: user.positon,
+                permission: user.permission,
+                permissions: user.permissions || [],
+                tokenVersion: user.tokenVersion || 0,
+                isRemember
+            },
             process.env.JWT_SECRET,
-            { expiresIn: "36500d" }
+            { expiresIn }
         );
 
+        // Xoay vòng Refresh Token mới
+        const newRefreshToken = user.createRefreshToken(isRemember ? 30 : 7);
+        await user.save();
+
         return success(res, "Gia hạn phiên đăng nhập thành công", {
-            token: newToken,
+            token: newAccessToken, // Tương thích v1
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken,
+            expiresIn: expiresInSeconds,
             username: user.username,
             fullname: user.fullname,
             positon: user.positon,
@@ -249,6 +321,47 @@ async function refreshToken(req, res) {
         });
     } catch (err) {
         return error(res, "Không thể gia hạn phiên đăng nhập: " + err.message, 401);
+    }
+}
+
+async function logoutUser(req, res) {
+    try {
+        const username = req.user?.username || req.body?.username;
+        const rawRefreshToken = req.body?.refreshToken;
+        const allDevices = req.body?.allDevices === true || req.body?.allDevices === "true";
+
+        if (!username) {
+            return success(res, "Đã đăng xuất");
+        }
+
+        const user = await User.findOne({ username });
+        if (user) {
+            if (allDevices) {
+                // Thu hồi tất cả các phiên: tăng tokenVersion và xóa mọi refresh token
+                user.tokenVersion = (user.tokenVersion || 0) + 1;
+                user.refreshTokens = [];
+            } else if (rawRefreshToken) {
+                // Thu hồi phiên hiện tại theo refreshToken hash
+                const tokenHash = crypto.createHash("sha256").update(rawRefreshToken).digest("hex");
+                user.refreshTokens = (user.refreshTokens || []).filter(t => t.tokenHash !== tokenHash);
+            } else {
+                // Mặc định đăng xuất thiết bị: tăng tokenVersion để vô hiệu hóa access token hiện có
+                user.tokenVersion = (user.tokenVersion || 0) + 1;
+                user.refreshTokens = [];
+            }
+            await user.save();
+        }
+
+        createLog({
+            action: "Đăng xuất hệ thống",
+            user: req.user?.fullname || username,
+            req,
+            details: { username, allDevices }
+        });
+
+        return success(res, "Đăng xuất thành công");
+    } catch (err) {
+        return error(res, "Đăng xuất thất bại: " + err.message, 500);
     }
 }
 
@@ -265,8 +378,7 @@ async function updateUserPermissions(req, res) {
                 isManager = requester.positon === "Quản lý" || 
                             requester.positon === "Admin" || 
                             requester.positon === "Quản trị viên" || 
-                            requester.permission === 1 || 
-                            requester.username === "along";
+                            requester.permission === 1;
             }
         }
 
@@ -278,7 +390,7 @@ async function updateUserPermissions(req, res) {
         if (!user) return error(res, "Không tìm thấy tài khoản người dùng", 404);
 
         user.permissions = Array.isArray(permissions) ? permissions : [];
-        if (user.username !== 'along' && user.positon !== 'Quản lý' && user.positon !== 'Admin' && user.positon !== 'Quản trị viên') {
+        if (user.positon !== 'Quản lý' && user.positon !== 'Admin' && user.positon !== 'Quản trị viên') {
             const hasAll = user.permissions.includes('*') || user.permissions.includes('all');
             user.permission = hasAll ? 1 : 2;
         }
@@ -304,6 +416,7 @@ async function updateUserPermissions(req, res) {
 module.exports = {
     loginUser,
     refreshToken,
+    logoutUser,
     createUser,
     updateUser,
     updateUserPermissions,

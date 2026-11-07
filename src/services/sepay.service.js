@@ -1,10 +1,53 @@
 const { notifyPaymentSuccess } = require("../socket");
 const recentNotifications = [];
 const crypto = require("crypto");
+const mongoose = require("mongoose");
 const SepayConfig = require("../models/sepayConfig.model");
 const HopDong = require("../models/hopDong.model");
 const Payment = require("../models/payment.model");
+const PaymentAuditLog = require("../models/paymentAuditLog.model");
 const { success, error } = require("../utils/response");
+
+// Helper to sanitize sensitive headers before logging
+function sanitizeHeaders(headers = {}) {
+    const sanitized = {};
+    for (const [k, v] of Object.entries(headers)) {
+        const lower = k.toLowerCase();
+        if (
+            lower.includes("secret") || 
+            lower.includes("authorization") || 
+            lower.includes("key") || 
+            lower.includes("password") || 
+            lower.includes("token")
+        ) {
+            sanitized[k] = "[REDACTED]";
+        } else {
+            sanitized[k] = v;
+        }
+    }
+    return sanitized;
+}
+
+// Helper to record payment audit log
+async function recordPaymentAuditLog({ provider = "SEPAY", providerTransactionId, status, message, amount, maHopDong, req }) {
+    try {
+        const ipAddress = req ? (req.headers["x-forwarded-for"] || req.socket?.remoteAddress || req.ip) : "";
+        const sanitized = req ? sanitizeHeaders(req.headers) : {};
+        await PaymentAuditLog.create({
+            provider,
+            providerTransactionId: providerTransactionId ? String(providerTransactionId) : undefined,
+            status,
+            message,
+            amount: Number(amount) || 0,
+            maHopDong,
+            ipAddress: typeof ipAddress === "string" ? ipAddress.split(",")[0].trim() : "",
+            sanitizedHeaders: sanitized,
+            payload: req?.body
+        });
+    } catch (e) {
+        console.warn("⚠️ Không thể ghi payment audit log:", e.message);
+    }
+}
 
 // Helper to get or create SepayConfig
 async function getOrCreateConfig() {
@@ -68,27 +111,63 @@ async function handleWebhook(req, res) {
     try {
         console.log("=== SEPAY WEBHOOK RECEIVED ===", req.body);
         const config = await getOrCreateConfig();
-        const webhookSecret = config.webhookSecret;
+        const webhookSecret = (config.webhookSecret || process.env.SEPAY_WEBHOOK_SECRET || "").trim();
+        const apiKey = (config.apiKey || process.env.SEPAY_API_KEY || "").trim();
+
+        // 1. FAIL CLOSED if no secret/key configured in server
+        if (!webhookSecret && !apiKey) {
+            console.error("❌ [SePay Webhook] Critical: Cấu hình bảo mật SePay Webhook (Secret/API Key) chưa được thiết lập!");
+            return res.status(500).json({ 
+                success: false, 
+                message: "Webhook endpoint security is not configured on server" 
+            });
+        }
+
         const signatureHeader = req.headers["x-sepay-signature"] || req.headers["X-SePay-Signature"];
         const timestampHeader = req.headers["x-sepay-timestamp"] || req.headers["X-SePay-Timestamp"];
         const authHeader = req.headers["authorization"] || req.headers["Authorization"];
+        const customApiKeyHeader = req.headers["x-sepay-api-key"] || req.headers["X-Sepay-Api-Key"];
 
-        let isValidSig = false;
-        if (signatureHeader && timestampHeader && req.rawBody) {
-            isValidSig = verifyHmacSignature(req.rawBody, signatureHeader, timestampHeader, webhookSecret);
-        }
+        let isAuthenticated = false;
 
-        let isValidKey = false;
-        if (config.apiKey) {
-            const expectedAuth = `Bearer ${config.apiKey}`;
-            if (authHeader && authHeader === expectedAuth) {
-                isValidKey = true;
+        // Kiểm tra HMAC SHA256 Signature
+        if (webhookSecret && signatureHeader) {
+            const rawBody = req.rawBody || JSON.stringify(req.body);
+            if (verifyHmacSignature(rawBody, signatureHeader, timestampHeader, webhookSecret)) {
+                isAuthenticated = true;
+            } else {
+                console.warn("⚠️ [SePay Webhook] Invalid HMAC signature.");
             }
         }
 
-        if (webhookSecret && signatureHeader && !isValidSig) {
-            console.warn("⚠️ Webhook verification failed. Invalid signature.");
-            return res.status(401).json({ success: false, message: "Invalid signature" });
+        // Kiểm tra API Key (nếu chưa xác thực qua HMAC)
+        if (!isAuthenticated && apiKey) {
+            const cleanExpected = apiKey.toLowerCase();
+            const rawAuth = (authHeader || "").trim().toLowerCase();
+            const rawCustom = (customApiKeyHeader || "").trim().toLowerCase();
+
+            if (
+                rawAuth === `bearer ${cleanExpected}` ||
+                rawAuth === `apikey ${cleanExpected}` ||
+                rawAuth === cleanExpected ||
+                rawCustom === cleanExpected
+            ) {
+                isAuthenticated = true;
+            }
+        }
+
+        // FAIL CLOSED: Từ chối ngay nếu không vượt qua xác thực
+        if (!isAuthenticated) {
+            console.warn("⛔ [SePay Webhook] Unauthorized request rejected. Missing or invalid signature/API key.");
+            await recordPaymentAuditLog({
+                status: "AUTH_FAILED",
+                message: "Thiếu hoặc sai chữ ký HMAC SHA256 / API Key của SePay Webhook",
+                req
+            });
+            return res.status(401).json({
+                success: false,
+                message: "Unauthorized: Invalid or missing SePay webhook credentials"
+            });
         }
 
         const {
@@ -117,7 +196,40 @@ async function handleWebhook(req, res) {
             return res.status(200).json({ success: true, message: "No contract code or valid amount found" });
         }
 
-        // Extract contract code HD + "6 SỐ CUỐI"
+        const providerTxId = String(id || referenceCode || "").trim();
+        if (!providerTxId) {
+            return res.status(400).json({ success: false, message: "Missing transaction identifier (id or referenceCode)" });
+        }
+        const existingTxId = `SEPAY_${providerTxId}`;
+
+        // 2. IDEMPOTENCY CHECK via Payment Ledger
+        const existingPayment = await Payment.findOne({
+            $or: [
+                { provider: "SEPAY", providerTransactionId: providerTxId },
+                { id: existingTxId }
+            ]
+        });
+
+        if (existingPayment) {
+            console.log(`[Idempotent] Transaction ${providerTxId} already processed previously for contract ${existingPayment.maHopDong}`);
+            await recordPaymentAuditLog({
+                providerTransactionId: providerTxId,
+                status: "DUPLICATE",
+                message: "Transaction already processed previously (idempotent)",
+                amount,
+                maHopDong: existingPayment.maHopDong,
+                req
+            });
+            return res.status(200).json({
+                success: true,
+                message: "Transaction already processed",
+                idempotent: true,
+                maHopDong: existingPayment.maHopDong,
+                amount: existingPayment.amount
+            });
+        }
+
+        // Extract contract code HD + digits
         const prefix = config.defaultPrefix || "HD";
         const cleanContent = transactionContent.replace(/\s+/g, " ").trim();
         
@@ -130,7 +242,6 @@ async function handleWebhook(req, res) {
 
         if (match) {
             const rawDigits = match[1].replace(/\D/g, "");
-            // Extract 6 last digits
             const last6Digits = rawDigits.length >= 6 ? rawDigits.slice(-6) : rawDigits;
             const code6 = `${prefix}${last6Digits}`;
             const codeFull = `${prefix}${rawDigits}`;
@@ -188,26 +299,41 @@ async function handleWebhook(req, res) {
 
         if (!contract) {
             console.log(`Contract not found for content: ${cleanContent}`);
+            await recordPaymentAuditLog({
+                providerTransactionId: providerTxId,
+                status: "CONTRACT_NOT_FOUND",
+                message: `No matching contract found for content '${cleanContent}'`,
+                amount,
+                req
+            });
             return res.status(200).json({ success: true, message: `No matching contract found for '${cleanContent}'` });
         }
 
-        // Duplicate check by transaction ID
-        const existingTxId = `SEPAY_${id || Date.now()}`;
-        const alreadyProcessed = contract.thanhToan?.cacLuotThanhToan?.some(t => t.id === existingTxId || t.noiDung?.includes(existingTxId));
-
-        if (alreadyProcessed) {
-            console.log(`Transaction ${existingTxId} already processed for contract ${contract.maHopDong}`);
-            return res.status(200).json({ success: true, message: "Transaction already processed", maHopDong: contract.maHopDong });
+        // Double check contract's embedded payment list for idempotency
+        const alreadyProcessedInContract = contract.thanhToan?.cacLuotThanhToan?.some(t => t.id === existingTxId || t.noiDung?.includes(existingTxId));
+        if (alreadyProcessedInContract) {
+            console.log(`Transaction ${existingTxId} already processed inside contract ${contract.maHopDong}`);
+            return res.status(200).json({ success: true, message: "Transaction already processed", idempotent: true, maHopDong: contract.maHopDong });
         }
 
-        // Record new payment into contract
+        // 3. DATABASE TRANSACTION & ATOMIC INSERTION
+        let session = null;
+        if (mongoose.connection && mongoose.connection.readyState === 1) {
+            try {
+                session = await mongoose.startSession();
+                session.startTransaction();
+            } catch (sessionErr) {
+                session = null; // Fallback for standalone MongoDB
+            }
+        }
+
         const newPaymentObj = {
             id: existingTxId,
             khachHang: contract.khachHang1?.tenKhachHang || "Khách hàng",
             amount: amount,
             date: transactionDate ? new Date(transactionDate).toISOString() : new Date().toISOString(),
             method: "Chuyển khoản (SePay VietQR)",
-            noiDung: `Chuyển khoản SePay GD#${id || ''} - ${transactionContent}`
+            noiDung: `Chuyển khoản SePay GD#${providerTxId} - ${transactionContent}`
         };
 
         const currentPaidList = contract.thanhToan?.cacLuotThanhToan || [];
@@ -232,7 +358,6 @@ async function handleWebhook(req, res) {
         }, 0);
         tongGiaTriForm += tongPhatSinh;
 
-        // Nếu giỏ hàng trống nhưng hợp đồng đã có sẵn tongGiaTri thì giữ nguyên tongGiaTri
         if (tongGiaTriForm === 0 && Number(contract.thanhToan?.tongGiaTri) > 0) {
             tongGiaTriForm = Number(contract.thanhToan.tongGiaTri);
         }
@@ -262,27 +387,66 @@ async function handleWebhook(req, res) {
         }
         const trangThaiThanhToan = conLai <= 0 ? "Đã thanh toán đủ" : (khachHangDaThanhToan > 0 ? `Đã cọc ${phanTramDaThanhToan}%` : "Chưa thanh toán");
 
-        await HopDong.findByIdAndUpdate(contract._id, {
-            "thanhToan.cacLuotThanhToan": updatedPaidList,
-            "thanhToan.khachHangDaThanhToan": khachHangDaThanhToan,
-            "thanhToan.conLai": conLai,
-            "thanhToan.phanTramDaThanhToan": phanTramDaThanhToan,
-            "thanhToan.trangThaiThanhToan": trangThaiThanhToan
-        });
-
-        // Also record to Payment collection if model exists
         try {
-            await Payment.create({
+            // Ghi bản ghi Payment vào Ledger trước.
+            // Nếu có 2 request đồng thời, compound index (provider + providerTransactionId) sẽ ném lỗi duplicate key E11000
+            const paymentDoc = new Payment({
                 id: existingTxId,
+                provider: "SEPAY",
+                providerTransactionId: providerTxId,
                 maHopDong: contract.maHopDong,
+                hopDongId: contract._id,
                 amount: amount,
-                date: new Date(),
+                date: transactionDate ? new Date(transactionDate) : new Date(),
                 method: "Chuyển khoản (SePay VietQR)",
                 khachHang: contract.khachHang1?.tenKhachHang || "Khách hàng",
-                noiDung: transactionContent
+                noiDung: transactionContent,
+                rawPayload: req.body,
+                status: "SUCCESS"
             });
-        } catch (e) {
-            console.warn("Warning: Could not save Payment model:", e.message);
+
+            await paymentDoc.save(session ? { session } : {});
+
+            // Sau khi Payment được khóa độc quyền thành công, cập nhật số dư Hợp Đồng
+            await HopDong.findByIdAndUpdate(contract._id, {
+                "thanhToan.cacLuotThanhToan": updatedPaidList,
+                "thanhToan.khachHangDaThanhToan": khachHangDaThanhToan,
+                "thanhToan.conLai": conLai,
+                "thanhToan.phanTramDaThanhToan": phanTramDaThanhToan,
+                "thanhToan.trangThaiThanhToan": trangThaiThanhToan
+            }, session ? { session } : {});
+
+            if (session) {
+                await session.commitTransaction();
+                session.endSession();
+            }
+
+            await recordPaymentAuditLog({
+                providerTransactionId: providerTxId,
+                status: "SUCCESS",
+                message: "Gạch nợ hợp đồng thành công",
+                amount,
+                maHopDong: contract.maHopDong,
+                req
+            });
+
+        } catch (dbErr) {
+            if (session) {
+                try { await session.abortTransaction(); session.endSession(); } catch (e) {}
+            }
+
+            // Xử lý lỗi trùng lặp do concurrent requests (E11000)
+            if (dbErr.code === 11000 || (dbErr.message && dbErr.message.includes("E11000"))) {
+                console.log(`[Idempotent Lock] Concurrent insert detected for ${providerTxId}. Idempotency maintained.`);
+                return res.status(200).json({
+                    success: true,
+                    message: "Transaction already processed concurrently (idempotent)",
+                    idempotent: true,
+                    maHopDong: contract.maHopDong
+                });
+            }
+
+            throw dbErr;
         }
 
         console.log(`✅ Gạch nợ thành công hợp đồng ${contract.maHopDong}: Đã thanh toán ${khachHangDaThanhToan} đ | Còn lại ${conLai} đ`);
@@ -291,7 +455,7 @@ async function handleWebhook(req, res) {
         const sessionCodeMatch = transactionContent.match(/S\d{4,6}/i);
         const extractedSessionCode = sessionCodeMatch ? sessionCodeMatch[0].toUpperCase() : '';
 
-        // Broadcast WebSocket Real-time Payment Event
+        // Broadcast WebSocket Real-time Payment Event (chỉ tới room hợp đồng và ban quản lý)
         notifyPaymentSuccess({
             sessionId: extractedSessionCode,
             maHopDong: contract.maHopDong,

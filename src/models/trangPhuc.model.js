@@ -32,12 +32,28 @@ const trangPhucSchema = new mongoose.Schema({
       'DANG_CHO_THUE',  // Khách đang mang về dùng
       'DANG_GIAT_HAP',  // Đang gửi giặt hấp
       'DANG_SUA_CHUA',  // Đang chỉnh sửa số đo / phục hồi
-      'NGUNG_SU_DUNG'   // Đã thanh lý hoặc hỏng
+      'NGUNG_SU_DUNG',  // Đã thanh lý hoặc hỏng
+      'NEEDS_INVENTORY' // Cần kiểm kê trước khi cho thuê (M06)
     ], 
     default: 'SAN_SANG' 
   },
   viTriKe: { type: String, default: "" },
   soLanSuDung: { type: Number, default: 0 },
+  qrCode: { type: String, default: "" },
+  barcode: { type: String, default: "" },
+  cleaningBufferHours: { type: Number, default: 24 }, // Thời gian đệm giặt hấp mặc định (giờ)
+  maintenanceHistory: [
+    {
+      action: { type: String, enum: ['GIAT_HAP', 'SUA_CHUA', 'KIEM_KE', 'KHAC'], default: 'GIAT_HAP' },
+      startDate: { type: Date, default: Date.now },
+      endDate: { type: Date },
+      cost: { type: Number, default: 0 },
+      performedBy: { type: String, default: "" },
+      notes: { type: String, default: "" },
+      photos: [{ type: String }],
+      createdAt: { type: Date, default: Date.now }
+    }
+  ],
   ghiChu: { type: String, default: "" }
 }, {
   timestamps: true

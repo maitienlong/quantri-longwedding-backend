@@ -10,12 +10,45 @@ const anhSchema = new mongoose.Schema({
   comments: [
     {
       noiDung: { type: String },
-      coordinateX: { type: Number },
-      coordinateY: { type: Number },
+      coordinateX: { type: Number }, // legacy % (0 - 100)
+      coordinateY: { type: Number }, // legacy % (0 - 100)
+      normalizedX: { type: Number }, // normalized [0, 1] relative to natural image width
+      normalizedY: { type: Number }, // normalized [0, 1] relative to natural image height
+      originalWidth: { type: Number },
+      originalHeight: { type: Number },
+      version: { type: Number, default: 1 },
+      author: { type: String, default: 'Khách hàng' },
       ngayTao: { type: Date, default: Date.now },
     }
   ]
 });
+
+const albumReviewSchema = new mongoose.Schema({
+  version: { type: Number, required: true },
+  title: { type: String, default: '' },
+  submittedAt: { type: Date, default: Date.now },
+  submittedBy: { type: String, default: 'Ekip Studio' },
+  status: { 
+    type: String, 
+    enum: ['PENDING', 'APPROVED', 'REJECTED', 'REQUEST_CHANGES'], 
+    default: 'PENDING' 
+  },
+  approvedAt: { type: Date },
+  approvedBy: { type: String },
+  approvalIp: { type: String },
+  clientNote: { type: String, default: '' },
+  changeRequestNotes: { type: String, default: '' },
+  photoSelectionsCount: { type: Number, default: 0 },
+  retouchPinsCount: { type: Number, default: 0 },
+  auditTrail: [
+    {
+      action: { type: String },
+      actor: { type: String },
+      timestamp: { type: Date, default: Date.now },
+      details: { type: mongoose.Schema.Types.Mixed }
+    }
+  ]
+}, { _id: true, timestamps: true });
 
 const albumSchema = new mongoose.Schema({
   maHopDong: { type: String, required: true, unique: true },
@@ -31,7 +64,20 @@ const albumSchema = new mongoose.Schema({
   danhSachAnhChinhSua: [anhSchema],
   trangThaiChinhSua: { type: String, default: 'Chưa đồng bộ' },
   chuDe: { type: String },
-  lastError: { type: String }
+  lastError: { type: String },
+
+  // PR 4.2 (MOD-06): Review Versioning, Approval State & Audit Trail
+  activeVersion: { type: Number, default: 1 },
+  currentVersionApproved: { type: Boolean, default: false },
+  reviewVersions: [albumReviewSchema],
+  auditTrail: [
+    {
+      action: { type: String },
+      actor: { type: String },
+      timestamp: { type: Date, default: Date.now },
+      details: { type: mongoose.Schema.Types.Mixed }
+    }
+  ]
 }, {
   timestamps: true
 });

@@ -347,6 +347,11 @@ async function register(req, res) {
     }
 }
 
+async function mergeCustomers(req, res) {
+    const leadService = require("./lead.service");
+    return leadService.mergeCustomers(req, res);
+}
+
 module.exports = {
     create,
     find,
@@ -354,5 +359,6 @@ module.exports = {
     remove,
     getFacebookInfo,
     login,
-    register
+    register,
+    mergeCustomers
 };
