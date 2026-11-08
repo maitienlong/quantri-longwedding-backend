@@ -295,21 +295,42 @@ async function onContractStageTransition({ contract, previousStage, nextStage, n
         return;
     }
 
-    // 2. Stage progression -> activate stage tasks and queue Outbox Notification
-    const stageTasks = await WorkTask.find({
-        contractId: contract._id,
-        stage: nextStage,
-        status: 'PENDING'
-    });
-
-    for (const t of stageTasks) {
-        t.status = 'IN_PROGRESS';
-        t.auditLog.push({
-            action: `Kích hoạt nhiệm vụ giai đoạn ${nextStage}`,
-            performedBy,
-            timestamp: new Date()
+    // 2. Stage progression -> activate stage tasks or complete all tasks when stage 4 (Hoàn thành)
+    if (nextStage === 4) {
+        // Hoàn thành hợp đồng -> toàn bộ các nội dung và nhiệm vụ trong các tiến trình cũng hoàn thành
+        const allTasks = await WorkTask.find({
+            contractId: contract._id,
+            status: { $ne: 'CANCELLED' }
         });
-        await t.save();
+        for (const t of allTasks) {
+            t.status = 'COMPLETED';
+            if (!t.completedAt) t.completedAt = new Date();
+            if (Array.isArray(t.checklist)) {
+                t.checklist.forEach(c => { c.isDone = true; });
+            }
+            t.auditLog.push({
+                action: "Hoàn tất nhiệm vụ khi hợp đồng hoàn thành",
+                performedBy,
+                timestamp: new Date()
+            });
+            await t.save();
+        }
+    } else {
+        const stageTasks = await WorkTask.find({
+            contractId: contract._id,
+            stage: nextStage,
+            status: 'PENDING'
+        });
+
+        for (const t of stageTasks) {
+            t.status = 'IN_PROGRESS';
+            t.auditLog.push({
+                action: `Kích hoạt nhiệm vụ giai đoạn ${nextStage}`,
+                performedBy,
+                timestamp: new Date()
+            });
+            await t.save();
+        }
     }
 
     // Create Outbox Notification (Idempotent per contract + stage)

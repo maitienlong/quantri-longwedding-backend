@@ -1,4 +1,4 @@
-const Booking = require("../models/booking.model");
+﻿const Booking = require("../models/booking.model");
 const HopDong = require("../models/hopDong.model");
 const { success, error } = require("../utils/response");
 const { createLog } = require("../utils/logger");
@@ -688,6 +688,7 @@ async function syncContractToBookings(hopDong, performedBy = "System Sync") {
         // Upsert by legacyRef
         const legacyScheduleId = `${hopDong._id}_${item.scheduleId}`;
         let booking = await Booking.findOne({ "legacyRef.scheduleId": legacyScheduleId });
+        const targetStatus = Number(hopDong.giaiDoan) === 4 ? 'COMPLETED' : 'CONFIRMED';
 
         if (booking) {
             booking.startTime = startTime;
@@ -695,6 +696,9 @@ async function syncContractToBookings(hopDong, performedBy = "System Sync") {
             booking.resources = resources;
             booking.diaDiem = item.diaDiem;
             booking.ghiChu = item.ghiChu;
+            if (Number(hopDong.giaiDoan) === 4) {
+                booking.status = 'COMPLETED';
+            }
             await booking.save();
             syncedCount++;
         } else {
@@ -707,7 +711,7 @@ async function syncContractToBookings(hopDong, performedBy = "System Sync") {
                 bookingType: item.serviceType,
                 startTime,
                 endTime,
-                status: 'CONFIRMED',
+                status: targetStatus,
                 resources,
                 diaDiem: item.diaDiem,
                 ghiChu: item.ghiChu,
@@ -722,6 +726,22 @@ async function syncContractToBookings(hopDong, performedBy = "System Sync") {
             await booking.save();
             syncedCount++;
         }
+    }
+
+    // Nếu hợp đồng đã hoàn thành (Giai đoạn 4), đảm bảo toàn bộ Booking của hợp đồng này chuyển sang COMPLETED
+    if (Number(hopDong.giaiDoan) === 4) {
+        await Booking.updateMany(
+            {
+                $or: [{ hopDongId: hopDong._id }, { maHopDong: hopDong.maHopDong }],
+                status: { $ne: 'CANCELLED' }
+            },
+            {
+                $set: {
+                    status: 'COMPLETED',
+                    confirmedBy: performedBy
+                }
+            }
+        );
     }
 
     return { synced: syncedCount, conflicts: conflictReports };

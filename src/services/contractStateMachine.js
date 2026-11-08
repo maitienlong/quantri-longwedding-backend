@@ -137,11 +137,11 @@ async function validateTransition({ contract, album, nextStage, nextSubStage, us
         const conLai = Number(contract.thanhToan?.conLai || 0);
         const daThanhToanDu = conLai <= 0 || contract.thanhToan?.trangThaiThanhToan === "Đã thanh toán đủ";
 
-        if (!daThanhToanDu) {
+        if (!daThanhToanDu && !forceOverride && !isManager) {
             const conLaiFmt = (conLai || 0).toLocaleString("vi-VN");
             return {
                 valid: false,
-                error: `Không thể hoàn thành đơn: Hợp đồng chưa thanh toán đủ số tiền còn lại (${conLaiFmt} đ). Vui lòng thanh toán đủ trước khi chuyển sang trạng thái Hoàn thành!`
+                error: `Không thể hoàn thành đơn: Hợp đồng chưa thanh toán đủ số tiền còn lại (${conLaiFmt} đ). Vui lòng xác nhận hoặc thanh toán đủ trước khi chuyển sang trạng thái Hoàn thành!`
             };
         }
 
@@ -183,7 +183,7 @@ async function validateTransition({ contract, album, nextStage, nextSubStage, us
         const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
         const futureTasks = allAssignedTasks.filter(t => t.date.getTime() > endOfToday.getTime());
 
-        if (futureTasks.length > 0) {
+        if (futureTasks.length > 0 && !forceOverride && !isManager) {
             const formatDateSimple = (d) => {
                 const day = String(d.getDate()).padStart(2, '0');
                 const mon = String(d.getMonth() + 1).padStart(2, '0');
@@ -194,7 +194,7 @@ async function validateTransition({ contract, album, nextStage, nextSubStage, us
 
             return {
                 valid: false,
-                error: `Không thể hoàn thành đơn: Trong hợp đồng đang còn lịch phân công chưa đến ngày thực hiện: [${taskListDesc}]. Không được hoàn thành đơn khi chưa qua ngày phục vụ!`
+                error: `Trong hợp đồng đang còn lịch phân công chưa đến ngày thực hiện: [${taskListDesc}]. Vui lòng xác nhận để hoàn tất hợp đồng và các lịch này!`
             };
         }
     }
@@ -217,8 +217,8 @@ async function validateTransition({ contract, album, nextStage, nextSubStage, us
                 });
 
                 if (unpassedItems.length > 0) {
-                    const managerOverrideReason = (data?.qcOverrideReason || data?.reason || "").trim();
-                    const hasManagerOverride = isManager && (forceOverride || data?.managerOverride) && managerOverrideReason.length > 0;
+                    const managerOverrideReason = (data?.qcOverrideReason || data?.reason || (forceOverride ? "Xác nhận hoàn thành hợp đồng" : "")).trim();
+                    const hasManagerOverride = (isManager || forceOverride) && (forceOverride || data?.managerOverride || managerOverrideReason.length > 0);
 
                     if (!hasManagerOverride) {
                         const itemNames = unpassedItems.map(i => `${i.tenSanPham} (${i.trangThai})`).join(", ");

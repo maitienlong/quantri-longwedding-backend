@@ -1,8 +1,10 @@
-const HopDong = require("../models/hopDong.model");
+﻿const HopDong = require("../models/hopDong.model");
 const KhachHang = require("../models/khachHang.model");
 const DichVu = require("../models/dichVu.model");
 const Payment = require("../models/payment.model");
 const Album = require("../models/album.model");
+const PrintDeliverable = require("../models/printDeliverable.model");
+const Booking = require("../models/booking.model");
 const { success, error } = require("../utils/response");
 const { createLog } = require("../utils/logger");
 const { getICTDateTimeString, formatICTDateTime } = require("../utils/dateUtils");
@@ -28,6 +30,134 @@ function ensurePaymentProgress(contract) {
     }
 
     return doc;
+}
+
+/**
+ * Tự động hoàn thành toàn bộ các tiến trình, lịch hẹn và thành phẩm liên quan khi hợp đồng hoàn thành (Giai đoạn 4)
+ */
+async function completeContractProgressAndSchedules(hopDong, performedBy = "Hệ thống") {
+    if (!hopDong) return;
+
+    // 1. Chốt trạng thái tiến trình và các mốc
+    hopDong.giaiDoan = 4;
+    hopDong.subGiaiDoan = 'hoan_thanh';
+    if (!hopDong.cacNgay) hopDong.cacNgay = {};
+    hopDong.cacNgay.chotLich = 'Đã hoàn thành';
+
+    if (!hopDong.khachHangXacNhanAnh) hopDong.khachHangXacNhanAnh = {};
+    hopDong.khachHangXacNhanAnh.daXacNhan = true;
+    if (!hopDong.khachHangXacNhanAnh.thoiGianXacNhan) {
+        hopDong.khachHangXacNhanAnh.thoiGianXacNhan = new Date();
+    }
+
+    // 2. Hoàn thành tất cả các lịch trong serviceSchedules
+    if (Array.isArray(hopDong.serviceSchedules)) {
+        hopDong.serviceSchedules.forEach(item => {
+            if (item) {
+                item.trangThai = 'Hoàn thành';
+                item.isCompleted = true;
+            }
+        });
+    }
+
+    // 3. Hoàn thành các lịch chụp, lịch quay phim, lịch trang điểm
+    if (Array.isArray(hopDong.lichChup)) {
+        hopDong.lichChup.forEach(item => {
+            if (item) {
+                item.trangThai = 'Hoàn thành';
+                item.isCompleted = true;
+            }
+        });
+    }
+    if (Array.isArray(hopDong.lichQuayPhim)) {
+        hopDong.lichQuayPhim.forEach(item => {
+            if (item) {
+                item.trangThai = 'Hoàn thành';
+                item.isCompleted = true;
+            }
+        });
+    }
+    if (Array.isArray(hopDong.lichTrangDiem)) {
+        hopDong.lichTrangDiem.forEach(item => {
+            if (item) {
+                item.trangThai = 'Hoàn thành';
+                item.isCompleted = true;
+            }
+        });
+    }
+
+    // 4. Cập nhật trang phục giữ (nếu đang giữ chỗ hoặc đang mượn thì chuyển sang đã trả)
+    if (Array.isArray(hopDong.trangPhucGiu)) {
+        hopDong.trangPhucGiu.forEach(tp => {
+            if (tp && ['GIU_CHO', 'DANG_MUON'].includes(tp.trangThai)) {
+                tp.trangThai = 'DA_TRA';
+                if (!tp.ngayTraThucTe) tp.ngayTraThucTe = new Date();
+            }
+        });
+    }
+
+    // 5. Cập nhật soạn đồ (nếu có)
+    if (hopDong.soanDo && hopDong.soanDo.trangThai && hopDong.soanDo.trangThai !== 'Đã trả') {
+        hopDong.soanDo.trangThai = 'Đã trả';
+    }
+
+    // 6. Cập nhật Album khách hàng
+    try {
+        await Album.updateMany(
+            { maHopDong: hopDong.maHopDong },
+            {
+                $set: {
+                    trangThai: 'Hoàn thành',
+                    trangThaiChinhSua: 'Hoàn thành',
+                    khachHangXacNhan: true,
+                    currentVersionApproved: true,
+                    ngayKhachXacNhan: new Date()
+                }
+            }
+        );
+    } catch (albumErr) {
+        console.warn("[completeContract Album sync warning]:", albumErr.message);
+    }
+
+    // 7. Cập nhật PrintDeliverable (In ấn & Bàn giao)
+    try {
+        await PrintDeliverable.updateMany(
+            {
+                $or: [{ hopDongId: hopDong._id }, { maHopDong: hopDong.maHopDong }],
+                trangThai: { $nin: ['DA_BAN_GIAO', 'DA_HUY'] }
+            },
+            {
+                $set: {
+                    trangThai: 'DA_BAN_GIAO',
+                    banGiao: {
+                        ngayBanGiao: new Date(),
+                        nguoiNhan: hopDong.khachHang1?.tenKhachHang || 'Khách hàng',
+                        ghiChuBanGiao: 'Tự động bàn giao khi hoàn thành hợp đồng'
+                    }
+                }
+            }
+        );
+    } catch (printErr) {
+        console.warn("[completeContract PrintDeliverable sync warning]:", printErr.message);
+    }
+
+    // 8. Cập nhật Booking collection
+    try {
+        await Booking.updateMany(
+            {
+                $or: [{ hopDongId: hopDong._id }, { maHopDong: hopDong.maHopDong }],
+                status: { $ne: 'CANCELLED' }
+            },
+            {
+                $set: {
+                    status: 'COMPLETED',
+                    confirmedBy: performedBy
+                }
+            }
+        );
+    } catch (bookingErr) {
+        console.warn("[completeContract Booking sync warning]:", bookingErr.message);
+    }
 }
 
 async function create(req, res) {
@@ -472,10 +602,30 @@ async function update(req, res) {
             hopDong.auditLog = auditLog;
         }
 
+        // Nếu hợp đồng được cập nhật thành Giai đoạn 4 (Hoàn thành), tự động hoàn tất toàn bộ tiến trình & lịch
+        if (hopDong.giaiDoan === 4) {
+            await completeContractProgressAndSchedules(hopDong, req.user?.fullname || "Hệ thống");
+        }
+
         await hopDong.save();
 
+        if (hopDong.giaiDoan === 4 && prevStage !== 4) {
+            try {
+                const workflowEngine = require("./workflowEngine");
+                await workflowEngine.onContractStageTransition({
+                    contract: hopDong,
+                    previousStage: prevStage,
+                    nextStage: 4,
+                    nextSubStage: 'hoan_thanh',
+                    performedBy: req.user?.fullname || "Hệ thống"
+                });
+            } catch (wfErr) {
+                console.warn("[Workflow Engine Warning]:", wfErr.message);
+            }
+        }
+
         // Tự động đồng bộ lịch sang Booking service
-        if (lichChup !== undefined || lichTrangDiem !== undefined || serviceSchedules !== undefined || cacNgay !== undefined) {
+        if (hopDong.giaiDoan === 4 || lichChup !== undefined || lichTrangDiem !== undefined || serviceSchedules !== undefined || cacNgay !== undefined) {
             try {
                 await bookingService.syncContractToBookings(hopDong, req.user?.fullname || "Hệ thống");
             } catch (syncErr) {
@@ -1256,10 +1406,22 @@ async function updateProgress(req, res) {
             });
         }
 
+        // Nếu chuyển sang Giai đoạn 4 (Hoàn thành), tự động hoàn thành toàn bộ tiến trình & lịch
+        if (nextStage === 4) {
+            await completeContractProgressAndSchedules(hopDong, performerName);
+        }
+
         hopDong.giaiDoan = nextStage;
         hopDong.subGiaiDoan = nextSubStage;
         hopDong.thoiGianChuyenGiaiDoan = new Date();
         await hopDong.save();
+
+        // Tự động đồng bộ lịch sang Booking service
+        try {
+            await bookingService.syncContractToBookings(hopDong, performerName);
+        } catch (syncErr) {
+            console.warn("[Booking Sync Warning]:", syncErr.message);
+        }
 
         try {
             const workflowEngine = require("./workflowEngine");
@@ -1314,12 +1476,23 @@ async function getCustomerContracts(req, res) {
         for (let contract of hopDong) {
             const album = await Album.findOne({ maHopDong: contract.maHopDong }).lean();
             if (album) {
+                const coverPhoto = (album.danhSachAnh && album.danhSachAnh.find(p => p.isCover))
+                    || (album.danhSachAnhChinhSua && album.danhSachAnhChinhSua[0])
+                    || (album.danhSachAnh && album.danhSachAnh[0])
+                    || null;
+                const thumbUrl = coverPhoto ? (coverPhoto.urlNen || coverPhoto.urlGoc || coverPhoto.url) : null;
                 contract.album = {
                     publicLink: album.publicLink,
                     trangThai: album.trangThai,
                     trangThaiChinhSua: album.trangThaiChinhSua,
                     soLuongAnh: album.danhSachAnh ? album.danhSachAnh.length : 0,
-                    khachHangXacNhan: album.khachHangXacNhan
+                    khachHangXacNhan: album.khachHangXacNhan,
+                    thumbnail: thumbUrl,
+                    coverPhoto: coverPhoto ? {
+                        idDrive: coverPhoto.idDrive,
+                        urlNen: coverPhoto.urlNen,
+                        urlGoc: coverPhoto.urlGoc
+                    } : null
                 };
             }
         }
@@ -1847,5 +2020,6 @@ module.exports = {
     getCustomerContracts,
     customerApproveAlbum,
     reconcilePaymentsEndpoint,
-    ensurePaymentProgress
+    ensurePaymentProgress,
+    completeContractProgressAndSchedules
 };
