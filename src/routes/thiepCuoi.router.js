@@ -2,8 +2,19 @@ const express = require("express");
 const router = express.Router();
 const thiepCuoiService = require("../services/thiepCuoi.service");
 const authMiddleware = require("../middleware/auth.middleware");
+const checkRole = require("../middleware/role.middleware");
 const upload = require("../middleware/upload.middleware");
 const { checkInvitationOwner } = require("../middleware/ownerPolicy.middleware");
+
+// ==========================================
+// ADMIN / STUDIO STAFF ROUTES (Đặt trước /:id)
+// ==========================================
+router.get("/admin/templates-catalog", authMiddleware, thiepCuoiService.adminGetTemplatesCatalog);
+router.get("/admin/list", authMiddleware, checkRole(["Quản lý", "Bán hàng", "Lễ tân"]), thiepCuoiService.adminListInvitations);
+router.post("/admin/list", authMiddleware, checkRole(["Quản lý", "Bán hàng", "Lễ tân"]), thiepCuoiService.adminListInvitations);
+router.post("/admin/create-from-contract", authMiddleware, checkRole(["Quản lý", "Bán hàng", "Lễ tân"]), thiepCuoiService.adminCreateInvitationFromContract);
+router.patch("/admin/:id/assign-template", authMiddleware, checkRole(["Quản lý", "Bán hàng", "Lễ tân"]), thiepCuoiService.adminUpdateInvitationSettings);
+router.patch("/admin/:id/settings", authMiddleware, checkRole(["Quản lý", "Bán hàng", "Lễ tân"]), thiepCuoiService.adminUpdateInvitationSettings);
 
 // Public routes (cho khách mời xem thiệp, gửi RSVP, gửi lời chúc)
 router.get("/studio-contacts", thiepCuoiService.getStudioContacts);

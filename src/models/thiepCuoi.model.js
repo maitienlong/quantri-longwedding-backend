@@ -40,6 +40,10 @@ const thiepCuoiSchema = new mongoose.Schema({
     maHopDong: { type: String, default: "" },
     templateId: { type: String, default: "tpl-luxury-gold" },
     themeId: { type: String, default: "luxury-gold" },
+    baseLayout: { type: String, default: "" },
+    themeConfig: { type: mongoose.Schema.Types.Mixed, default: null },
+    overridePermission: { type: Boolean, default: false },
+    adminNote: { type: String, default: "" },
     title: { type: String, default: "Thiệp Cưới Online" },
     
     groom: {

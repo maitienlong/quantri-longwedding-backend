@@ -236,6 +236,32 @@ const DEFAULT_INVITATION_TEMPLATES = [
     isPopular: true
   },
   {
+    id: 'tpl-minimalism-xanh',
+    code: 'VIP-MINIGREEN-07',
+    serviceCode: 'VIP-MINIGREEN-07',
+    name: 'Minimalism Xanh (Tối Giản Xanh Lá Thảo Mộc)',
+    category: 'Hiện Đại',
+    themeId: 'minimalism-xanh',
+    baseLayout: 'minimalism-xanh',
+    thumbnail: '/images/minimalism-green/thumbnail.webp',
+    coverImage: '/images/minimalism-green/flower-background.webp',
+    accessType: 'vip',
+    price: '299.000đ',
+    badge: 'ĐẶC QUYỀN VIP',
+    requiredPackage: 'Gói Chụp Ảnh Cưới / Trọn Gói Studio',
+    description: 'Phong cách tối giản chuẩn tinh thần "Less is more", nền giấy mộc cao cấp, hoa văn lá bạch đàn eucalyptus dịu mắt, khung ảnh đôi polaroid nghiêng nghệ thuật.',
+    primaryColor: '#6b7b4f',
+    secondaryColor: '#ffffff',
+    accentColor: '#87a172',
+    bgType: 'minimalism-sage',
+    envelopeStyle: 'minimalism-green-envelope',
+    effectType: 'minimalism-leaf-float',
+    musicUrl: 'https://assets.mixkit.co/music/preview/mixkit-serene-view-443.mp3',
+    musicTitle: 'Acoustic Love - Giai Điệu Dịu Êm',
+    isActive: true,
+    isPopular: true
+  },
+  {
     id: 'tpl-dreamy-fairytale',
     code: 'VIP-DREAMY-05',
     serviceCode: 'VIP-DREAMY-05',
@@ -700,6 +726,17 @@ exports.addSectionItem = async (req, res) => {
     websiteData.markModified('data');
     await websiteData.save();
 
+    if (section === 'invitation-templates') {
+      try {
+        const dichVuService = require("./dichVu.service");
+        if (dichVuService && dichVuService.syncInvitationTemplates) {
+          await dichVuService.syncInvitationTemplates(websiteData.data);
+        }
+      } catch (syncErr) {
+        console.warn("Lỗi đồng bộ dịch vụ thiệp cưới khi thêm:", syncErr.message);
+      }
+    }
+
     res.status(200).json({ success: true, message: "Thêm thành công", data: websiteData.data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -727,6 +764,17 @@ exports.updateSectionItem = async (req, res) => {
     websiteData.data = updatedData;
     websiteData.markModified('data');
     await websiteData.save();
+
+    if (section === 'invitation-templates') {
+      try {
+        const dichVuService = require("./dichVu.service");
+        if (dichVuService && dichVuService.syncInvitationTemplates) {
+          await dichVuService.syncInvitationTemplates(websiteData.data);
+        }
+      } catch (syncErr) {
+        console.warn("Lỗi đồng bộ dịch vụ thiệp cưới khi sửa:", syncErr.message);
+      }
+    }
 
     res.status(200).json({ success: true, message: "Sửa thành công", data: websiteData.data });
   } catch (error) {
