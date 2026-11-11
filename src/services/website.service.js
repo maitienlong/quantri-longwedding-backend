@@ -428,25 +428,30 @@ exports.getSection = async (req, res) => {
 
     // Mẫu Thiệp Mời Cưới Online (E-Invitation Templates)
     if (section === 'invitation-templates') {
-      if (!data || !Array.isArray(data) || data.length === 0) {
-        data = DEFAULT_INVITATION_TEMPLATES;
-      } else {
-        // Tự động bổ sung các mẫu mặc định còn thiếu (giữ nguyên cấu hình isActive của mẫu đã lưu)
-        const missing = DEFAULT_INVITATION_TEMPLATES.filter(
-          def => !data.some(item => item.id === def.id || item.themeId === def.themeId)
-        );
-        if (missing.length > 0) {
-          data = [...data, ...missing];
+      if (!websiteData || !data || !Array.isArray(data) || data.length === 0) {
+        data = DEFAULT_INVITATION_TEMPLATES.map((tpl, idx) => ({
+          ...tpl,
+          baseLayout: tpl.baseLayout || tpl.themeId,
+          order: tpl.order || idx + 1
+        }));
+        try {
+          await WEBSITE.findOneAndUpdate(
+            { section: 'invitation-templates' },
+            { section: 'invitation-templates', data },
+            { upsert: true, new: true }
+          );
+        } catch (e) {
+          console.warn("Lỗi khởi tạo mẫu thiệp mặc định vào DB:", e.message);
         }
-      }
-      try {
-        await WEBSITE.findOneAndUpdate(
-          { section: 'invitation-templates' },
-          { section: 'invitation-templates', data },
-          { upsert: true, new: true }
-        );
-      } catch (e) {
-        console.warn("Lỗi lưu mẫu thiệp mặc định vào DB:", e.message);
+      } else {
+        // Chuẩn hóa thứ tự order cho danh sách đã lưu trong DB
+        data = data
+          .map((tpl, idx) => ({
+            ...tpl,
+            baseLayout: tpl.baseLayout || tpl.themeId || 'luxury-gold',
+            order: typeof tpl.order === 'number' ? tpl.order : idx + 1
+          }))
+          .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
       }
       return res.status(200).json({ success: true, data });
     }
@@ -687,6 +692,7 @@ exports.updateSection = async (req, res) => {
       await websiteData.save();
     } else {
       websiteData.data = data;
+      websiteData.markModified('data');
       await websiteData.save();
     }
 
