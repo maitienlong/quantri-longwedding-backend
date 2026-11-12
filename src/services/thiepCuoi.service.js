@@ -134,6 +134,47 @@ exports.getInvitationById = async (req, res) => {
     }
 };
 
+// Helper nhận diện thông minh Chú Rể & Cô Dâu từ Hợp Đồng (tránh đảo ngược nếu khachHang1 là Cô Dâu)
+function resolveCoupleFromContract(hopDong, fallbackCustomer = null) {
+    const kh1 = hopDong?.khachHang1 || null;
+    const kh2 = hopDong?.khachHang2 || null;
+
+    let groomObj = kh1;
+    let brideObj = kh2;
+
+    const gt1 = String(kh1?.gioiTinh || '').trim().toLowerCase();
+    const gt2 = String(kh2?.gioiTinh || '').trim().toLowerCase();
+
+    if ((gt1 === 'nữ' || gt1 === 'nu') && (gt2 === 'nam' || !gt2)) {
+        groomObj = kh2;
+        brideObj = kh1;
+    } else if (gt2 === 'nam' && gt1 !== 'nam') {
+        groomObj = kh2;
+        brideObj = kh1;
+    }
+
+    const fbGt = String(fallbackCustomer?.gioiTinh || '').trim().toLowerCase();
+    const groomName = groomObj?.tenKhachHang || (fbGt === 'nam' ? fallbackCustomer?.tenKhachHang : '') || 'Chú Rể';
+    const brideName = brideObj?.tenKhachHang || ((fbGt === 'nữ' || fbGt === 'nu') ? fallbackCustomer?.tenKhachHang : '') || 'Cô Dâu';
+
+    return {
+        groom: {
+            name: groomName,
+            nickname: groomName,
+            phone: groomObj?.soDienThoai || (fbGt === 'nam' ? fallbackCustomer?.soDienThoai : '') || '',
+            avatar: groomObj?.avatar || (fbGt === 'nam' ? fallbackCustomer?.avatar : '') || '',
+            hometown: groomObj?.diaChi || ''
+        },
+        bride: {
+            name: brideName,
+            nickname: brideName,
+            phone: brideObj?.soDienThoai || ((fbGt === 'nữ' || fbGt === 'nu') ? fallbackCustomer?.soDienThoai : '') || '',
+            avatar: brideObj?.avatar || ((fbGt === 'nữ' || fbGt === 'nu') ? fallbackCustomer?.avatar : '') || '',
+            hometown: brideObj?.diaChi || ''
+        }
+    };
+}
+
 // 2. Lấy thiệp cưới của khách hàng đang đăng nhập hoặc theo ID khách hàng
 exports.getMyInvitation = async (req, res) => {
     try {
@@ -142,7 +183,12 @@ exports.getMyInvitation = async (req, res) => {
             return error(res, "Vui lòng đăng nhập tài khoản khách hàng", 401);
         }
 
-        let invitation = await ThiepCuoi.findOne({ khachHangId: customerId });
+        let invitation = await ThiepCuoi.findOne({
+            $or: [
+                { khachHangId: customerId },
+                { customerId: String(customerId) }
+            ]
+        }).sort({ updatedAt: -1 });
         
         // Nếu chưa có thiệp cưới nhưng có hợp đồng, tự động nạp thông tin từ Hợp Đồng Studio
         if (!invitation) {
@@ -151,21 +197,14 @@ exports.getMyInvitation = async (req, res) => {
             }).populate("khachHang1").populate("khachHang2");
 
             const khachHang = await KhachHang.findById(customerId);
+            const couple = resolveCoupleFromContract(hopDong, khachHang);
 
             let initialData = {
                 invitationId: `thiep-${khachHang ? khachHang.soDienThoai || khachHang.maDangNhap || customerId : customerId}`,
                 khachHangId: customerId,
-                title: `Thiệp Cưới: ${khachHang ? khachHang.tenKhachHang : 'Dâu Rể'}`,
-                groom: {
-                    name: hopDong?.khachHang1?.tenKhachHang || (khachHang?.gioiTinh === 'Nam' ? khachHang.tenKhachHang : ''),
-                    phone: hopDong?.khachHang1?.soDienThoai || (khachHang?.gioiTinh === 'Nam' ? khachHang.soDienThoai : ''),
-                    avatar: hopDong?.khachHang1?.avatar || (khachHang?.gioiTinh === 'Nam' ? khachHang.avatar : '')
-                },
-                bride: {
-                    name: hopDong?.khachHang2?.tenKhachHang || (khachHang?.gioiTinh === 'Nữ' ? khachHang.tenKhachHang : ''),
-                    phone: hopDong?.khachHang2?.soDienThoai || (khachHang?.gioiTinh === 'Nữ' ? khachHang.soDienThoai : ''),
-                    avatar: hopDong?.khachHang2?.avatar || (khachHang?.gioiTinh === 'Nữ' ? khachHang.avatar : '')
-                },
+                title: `Thiệp Cưới: ${couple.groom.name} & ${couple.bride.name}`,
+                groom: couple.groom,
+                bride: couple.bride,
                 guestList: [],
                 rsvps: [],
                 wishes: []
@@ -198,7 +237,13 @@ exports.getMyInvitation = async (req, res) => {
 // 3. Lưu hoặc Cập nhật thiệp cưới (Upsert)
 exports.saveInvitation = async (req, res) => {
     try {
-        const data = req.body;
+        const data = { ...(req.body || {}) };
+        // Loại bỏ các trường hệ thống bất biến của Mongoose để tránh lỗi xung đột $set / $setOnInsert
+        delete data._id;
+        delete data.__v;
+        delete data.createdAt;
+        delete data.updatedAt;
+
         const host = (req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : req.protocol) + '://' + req.get('host');
 
         // Tự động giải mã & tối ưu hóa mọi trường ảnh Base64 trong payload thiệp cưới
@@ -207,6 +252,9 @@ exports.saveInvitation = async (req, res) => {
         }
 
         if (data.groom) {
+            if (data.groom.name && !data.groom.nickname) {
+                data.groom.nickname = data.groom.name;
+            }
             if (data.groom.avatar && typeof data.groom.avatar === 'string' && data.groom.avatar.startsWith('data:image')) {
                 data.groom.avatar = await saveBase64ImageFile(data.groom.avatar, 'groom', host);
             }
@@ -216,6 +264,9 @@ exports.saveInvitation = async (req, res) => {
         }
 
         if (data.bride) {
+            if (data.bride.name && !data.bride.nickname) {
+                data.bride.nickname = data.bride.name;
+            }
             if (data.bride.avatar && typeof data.bride.avatar === 'string' && data.bride.avatar.startsWith('data:image')) {
                 data.bride.avatar = await saveBase64ImageFile(data.bride.avatar, 'bride', host);
             }
@@ -242,13 +293,18 @@ exports.saveInvitation = async (req, res) => {
                 return guest;
             }));
         }
-        // Tự động sinh shortCode và customSlug nếu chưa có
+        // Tự động sinh shortCode và cập nhật customSlug / title theo tên Cô dâu & Chú rể mới nhất
         if (!data.shortCode && data.invitationId) {
             const m = data.invitationId.match(/hd[-_]?\d*[-_]?(\d+)/i);
             if (m && m[1]) data.shortCode = m[1];
         }
-        if (!data.customSlug && (data.groom?.name || data.bride?.name)) {
+        if (data.groom?.name || data.bride?.name) {
             data.customSlug = generateSlugFromNames(data.groom?.name, data.bride?.name);
+            if (!data.title || data.title.startsWith('Thiệp Cưới') || data.title.startsWith('Thiệp Mời')) {
+                const gName = (data.groom?.name || 'Chú Rể').trim();
+                const bName = (data.bride?.name || 'Cô Dâu').trim();
+                data.title = `Thiệp Cưới: ${gName} & ${bName}`;
+            }
         }
         const customerId = req.user?.id || data.khachHangId;
 
@@ -271,15 +327,23 @@ exports.saveInvitation = async (req, res) => {
         if (data.invitationId) {
             existingInvitation = await ThiepCuoi.findOne({ invitationId: data.invitationId });
             if (existingInvitation) {
-                const userIdStr = String(req.user?.id || req.user?._id || '');
+                const userIdStr = String(req.user?.id || req.user?._id || customerId || '');
                 const username = String(req.user?.username || '');
-                const cId = String(req.user?.customerId || '');
-                const isOwner = (
+                const cId = String(req.user?.customerId || customerId || '');
+                let isOwner = (
                     (existingInvitation.createdBy && String(existingInvitation.createdBy) === userIdStr) ||
                     (existingInvitation.creator && existingInvitation.creator.toLowerCase() === username.toLowerCase()) ||
                     (existingInvitation.khachHangId && (String(existingInvitation.khachHangId) === cId || String(existingInvitation.khachHangId) === userIdStr)) ||
                     (existingInvitation.customerId && (String(existingInvitation.customerId) === cId || String(existingInvitation.customerId) === userIdStr || String(existingInvitation.customerId) === username))
                 );
+                // Cho phép cả Cô dâu và Chú rể thuộc cùng Hợp Đồng chỉnh sửa thiệp cưới chung
+                if (!isOwner && existingInvitation.maHopDong && userIdStr) {
+                    const sharedContract = await HopDong.findOne({
+                        maHopDong: existingInvitation.maHopDong,
+                        $or: [{ khachHang1: userIdStr }, { khachHang2: userIdStr }]
+                    }).lean();
+                    if (sharedContract) isOwner = true;
+                }
                 if (!isManager && !isOwner) {
                     return error(res, "Bạn không có quyền chỉnh sửa thiệp cưới của khách hàng khác (Owner Policy)", 403);
                 }
@@ -302,11 +366,15 @@ exports.saveInvitation = async (req, res) => {
             }
         }
 
-        let updated = await ThiepCuoi.findOneAndUpdate(
-            { 
+        const filterQuery = existingInvitation
+            ? { _id: existingInvitation._id }
+            : {
                 khachHangId: customerId,
                 ...(data.invitationId ? { invitationId: data.invitationId } : {})
-            },
+            };
+
+        let updated = await ThiepCuoi.findOneAndUpdate(
+            filterQuery,
             { $set: data },
             { new: true, upsert: true, setDefaultsOnInsert: true }
         );
@@ -637,10 +705,11 @@ async function autoProvisionCustomerInvitations(customerId) {
                 });
 
                 if (!existing) {
-                    const groomName = contract.khachHang1?.tenKhachHang || (khachHang?.gioiTinh === 'Nam' ? khachHang.tenKhachHang : 'Chú Rể');
-                    const groomPhone = contract.khachHang1?.soDienThoai || (khachHang?.gioiTinh === 'Nam' ? khachHang.soDienThoai : '');
-                    const brideName = contract.khachHang2?.tenKhachHang || (khachHang?.gioiTinh === 'Nữ' ? khachHang.tenKhachHang : 'Cô Dâu');
-                    const bridePhone = contract.khachHang2?.soDienThoai || (khachHang?.gioiTinh === 'Nữ' ? khachHang.soDienThoai : '');
+                    const couple = resolveCoupleFromContract(contract, khachHang);
+                    const groomName = couple.groom.name;
+                    const groomPhone = couple.groom.phone;
+                    const brideName = couple.bride.name;
+                    const bridePhone = couple.bride.phone;
 
                     const ngayCuoiStr = contract.cacNgay?.ngayCuoi 
                         ? new Date(contract.cacNgay.ngayCuoi).toISOString().split('T')[0] 
@@ -665,15 +734,19 @@ async function autoProvisionCustomerInvitations(customerId) {
                         gallery: albumPhotos.gallery || [],
                         groom: {
                             name: groomName,
+                            nickname: groomName,
                             phone: groomPhone,
-                            avatar: contract.khachHang1?.avatar || khachHang?.avatar || albumPhotos.groomAvatar || '',
+                            hometown: couple.groom.hometown || '',
+                            avatar: couple.groom.avatar || khachHang?.avatar || albumPhotos.groomAvatar || '',
                             bank: 'MB Bank',
                             order: 'Trưởng Nam'
                         },
                         bride: {
                             name: brideName,
+                            nickname: brideName,
                             phone: bridePhone,
-                            avatar: contract.khachHang2?.avatar || albumPhotos.brideAvatar || '',
+                            hometown: couple.bride.hometown || '',
+                            avatar: couple.bride.avatar || albumPhotos.brideAvatar || '',
                             bank: 'Vietcombank',
                             order: 'Ái Nữ'
                         },
