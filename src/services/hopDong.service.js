@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const HopDong = require("../models/hopDong.model");
 const KhachHang = require("../models/khachHang.model");
 const DichVu = require("../models/dichVu.model");
@@ -162,6 +163,19 @@ async function completeContractProgressAndSchedules(hopDong, performedBy = "Hệ
 
 async function create(req, res) {
     try {
+        if (!req.body.khachHang1 || !mongoose.Types.ObjectId.isValid(req.body.khachHang1)) {
+            return error(res, "Chưa nhập thông tin khách hàng hoặc khách hàng chưa có trong cơ sở dữ liệu!", 400);
+        }
+        const kh1Exists = await KhachHang.exists({ _id: req.body.khachHang1 });
+        if (!kh1Exists) {
+            return error(res, "Chưa nhập thông tin khách hàng hoặc khách hàng chưa có trong cơ sở dữ liệu!", 400);
+        }
+        if (req.body.khachHang2) {
+            if (!mongoose.Types.ObjectId.isValid(req.body.khachHang2) || !(await KhachHang.exists({ _id: req.body.khachHang2 }))) {
+                return error(res, "Khách hàng 2 chưa có trong cơ sở dữ liệu!", 400);
+            }
+        }
+
         const hasAssignCrewPerm = req.user && (
             req.user.username === 'along' ||
             req.user.positon === 'Quản lý' ||
