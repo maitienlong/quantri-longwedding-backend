@@ -1,4 +1,4 @@
-﻿const HopDong = require("../models/hopDong.model");
+const HopDong = require("../models/hopDong.model");
 const KhachHang = require("../models/khachHang.model");
 const DichVu = require("../models/dichVu.model");
 const Payment = require("../models/payment.model");
@@ -280,13 +280,19 @@ async function create(req, res) {
                 }
 
                 // Tạo đối tượng Payment mới trong CSDL
+                const pProvider = method.includes("SePay") ? "SEPAY" : (method.includes("Chuyển khoản") ? "MANUAL_TRANSFER" : "CASH");
                 const newPayment = new Payment({
                     id: paymentId,
+                    provider: pProvider,
+                    providerTransactionId: paymentId,
+                    maHopDong: hopDong.maHopDong,
+                    hopDongId: hopDong._id,
                     khachHang: khachHangName,
                     amount: amount,
                     date: date,
                     method: method,
-                    noiDung: noiDung
+                    noiDung: noiDung,
+                    status: "SUCCESS"
                 });
                 await newPayment.save();
 
@@ -516,11 +522,18 @@ async function update(req, res) {
             const tongPhatSinh = incomingThanhToan.tongPhatSinh !== undefined ? Number(incomingThanhToan.tongPhatSinh) || 0 : (Number(currentThanhToan.tongPhatSinh) || 0);
             const cacLuotThanhToan = incomingThanhToan.cacLuotThanhToan !== undefined ? incomingThanhToan.cacLuotThanhToan : (currentThanhToan.cacLuotThanhToan || []);
 
-            // Recalculate totals from active cart items
+            // Recalculate totals from active cart items + add-ons
             const activeGioHang = hopDong.gioHang || [];
-            const tongGiaTri = activeGioHang.reduce((sum, item) => {
-                return sum + (Number(item.thanhTien) || 0);
+            const tongCart = activeGioHang.reduce((sum, item) => {
+                if (item.thanhTien !== undefined && item.thanhTien !== null) {
+                    return sum + (Number(item.thanhTien) || 0);
+                }
+                const donGia = parseFloat(item.donGia?.toString().replace(/[^0-9.-]+/g, "") || item.giaChoThueDichVu?.toString().replace(/[^0-9.-]+/g, "") || 0);
+                const soLuong = Math.max(1, Number(item.soLuong) || 1);
+                const giamGiaDichVu = Math.max(0, Number(item.giamGiaDichVu) || 0);
+                return sum + Math.max(0, (donGia * soLuong) - giamGiaDichVu);
             }, 0);
+            const tongGiaTri = tongCart + tongPhatSinh;
 
             let tongGiaTriSauGiam = tongGiaTri;
             if (Number(loaiGiamGia) === 1) {
@@ -568,15 +581,27 @@ async function update(req, res) {
             if (cacLuotThanhToan && cacLuotThanhToan.length > 0) {
                 for (let payment of cacLuotThanhToan) {
                     if (payment.id) {
-                        const existing = await Payment.findOne({ id: payment.id });
+                        const pMethod = payment.method || "Tiền mặt";
+                        const pProvider = pMethod.includes("SePay") ? "SEPAY" : (pMethod.includes("Chuyển khoản") ? "MANUAL_TRANSFER" : "CASH");
+                        const existing = await Payment.findOne({
+                            $or: [
+                                { id: payment.id },
+                                { provider: pProvider, providerTransactionId: payment.id }
+                            ]
+                        });
                         if (!existing) {
                             const newPayment = new Payment({
                                 id: payment.id,
+                                provider: pProvider,
+                                providerTransactionId: payment.id,
+                                maHopDong: hopDong.maHopDong,
+                                hopDongId: hopDong._id,
                                 khachHang: payment.khachHang || "Khách hàng",
                                 amount: Number(payment.amount) || 0,
                                 date: payment.date ? new Date(payment.date) : new Date(),
-                                method: payment.method || "Tiền mặt",
-                                noiDung: payment.noiDung || "Thanh toán"
+                                method: pMethod,
+                                noiDung: payment.noiDung || "Thanh toán",
+                                status: "SUCCESS"
                             });
                             await newPayment.save();
                         }

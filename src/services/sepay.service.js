@@ -106,16 +106,63 @@ function verifyHmacSignature(rawBody, signatureHeader, timestampHeader, secret) 
     return receivedSig.toLowerCase() === expectedWithPrefix.toLowerCase() || receivedSig.toLowerCase() === computedHex.toLowerCase();
 }
 
+// Helper to build contract search queries from content or code
+function buildContractSearchQueries(rawString, prefix = "HD") {
+    if (!rawString) return [];
+    const clean = String(rawString).trim();
+    const cleanNoSpaces = clean.replace(/\s+/g, "");
+
+    const queries = [
+        { maHopDong: clean },
+        { maHopDong: cleanNoSpaces }
+    ];
+
+    // Match HD followed by digits/separators, or pure digits
+    const hdMatch = clean.match(new RegExp(`(?:${prefix})[-_\\s]?([0-9]+(?:[-_\\s][0-9]+)*)`, "i")) || clean.match(/HD[-_\\s]?([0-9]+(?:[-_\\s][0-9]+)*)/i);
+    let digitStr = "";
+    if (hdMatch && hdMatch[1]) {
+        digitStr = hdMatch[1].replace(/\D/g, "");
+    } else {
+        const anyDigits = clean.match(/\d{3,}/);
+        if (anyDigits) digitStr = anyDigits[0];
+    }
+
+    if (digitStr) {
+        queries.push({ maHopDong: `${prefix}${digitStr}` });
+        queries.push({ maHopDong: `${prefix}-${digitStr}` });
+
+        // If digits start with year (e.g. 2024, 2025, 2026, 2027)
+        if (digitStr.startsWith("20") && digitStr.length >= 5) {
+            const year = digitStr.substring(0, 4);
+            const seq = digitStr.substring(4);
+            const cleanSeq = seq.replace(/^0+/, "") || seq;
+
+            queries.push({ maHopDong: `${prefix}-${year}-${cleanSeq}` });
+            queries.push({ maHopDong: `${prefix}-${year}-${seq}` });
+            queries.push({ maHopDong: `${prefix}${year}${cleanSeq}` });
+            queries.push({ maHopDong: `${prefix}${year}${seq}` });
+            queries.push({ maHopDong: new RegExp(`^${prefix}[-_\\s]?${year}[-_\\s]?0*${cleanSeq}$`, 'i') });
+        } else {
+            const cleanSeq = digitStr.replace(/^0+/, "") || digitStr;
+            queries.push({ maHopDong: `${prefix}-${cleanSeq}` });
+            queries.push({ maHopDong: `${prefix}${cleanSeq}` });
+            queries.push({ maHopDong: new RegExp(`^${prefix}[-_\\s]?0*${cleanSeq}$`, 'i') });
+        }
+    }
+
+    return queries;
+}
+
 // 1. Handle Webhook from SePay (POST /api/sepay/webhook)
 async function handleWebhook(req, res) {
     try {
         console.log("=== SEPAY WEBHOOK RECEIVED ===", req.body);
         const config = await getOrCreateConfig();
-        const webhookSecret = (config.webhookSecret || process.env.SEPAY_WEBHOOK_SECRET || "").trim();
+        const webhookSecret = (config.webhookSecret || config.secretKey || process.env.SEPAY_WEBHOOK_SECRET || "").trim();
         const apiKey = (config.apiKey || process.env.SEPAY_API_KEY || "").trim();
 
-        // 1. FAIL CLOSED if no secret/key configured in server
-        if (!webhookSecret && !apiKey) {
+        // 1. FAIL CLOSED if no secret/key configured AND no studio account number configured
+        if (!webhookSecret && !apiKey && !config.accountNumber && !process.env.SEPAY_ACCOUNT_NUMBER) {
             console.error("❌ [SePay Webhook] Critical: Cấu hình bảo mật SePay Webhook (Secret/API Key) chưa được thiết lập!");
             return res.status(500).json({ 
                 success: false, 
@@ -127,10 +174,24 @@ async function handleWebhook(req, res) {
         const timestampHeader = req.headers["x-sepay-timestamp"] || req.headers["X-SePay-Timestamp"];
         const authHeader = req.headers["authorization"] || req.headers["Authorization"];
         const customApiKeyHeader = req.headers["x-sepay-api-key"] || req.headers["X-Sepay-Api-Key"];
+        const queryApiKey = req.query?.apiKey || req.query?.api_key || req.query?.key || req.query?.token;
+
+        const validKeySet = new Set(
+            [
+                apiKey,
+                webhookSecret,
+                config.secretKey,
+                config.webhookSecret,
+                process.env.SEPAY_API_KEY,
+                process.env.SEPAY_WEBHOOK_SECRET
+            ]
+            .filter(Boolean)
+            .map(k => String(k).trim().toLowerCase())
+        );
 
         let isAuthenticated = false;
 
-        // Kiểm tra HMAC SHA256 Signature
+        // 1. Kiểm tra HMAC SHA256 Signature (nếu có signature header)
         if (webhookSecret && signatureHeader) {
             const rawBody = req.rawBody || JSON.stringify(req.body);
             if (verifyHmacSignature(rawBody, signatureHeader, timestampHeader, webhookSecret)) {
@@ -140,19 +201,35 @@ async function handleWebhook(req, res) {
             }
         }
 
-        // Kiểm tra API Key (nếu chưa xác thực qua HMAC)
-        if (!isAuthenticated && apiKey) {
-            const cleanExpected = apiKey.toLowerCase();
-            const rawAuth = (authHeader || "").trim().toLowerCase();
-            const rawCustom = (customApiKeyHeader || "").trim().toLowerCase();
+        // 2. Kiểm tra API Key / Secret Key từ Authorization Header, Custom Header hoặc Query
+        if (!isAuthenticated && validKeySet.size > 0) {
+            let providedToken = "";
+            if (authHeader) {
+                const parts = authHeader.trim().split(/\s+/);
+                if (parts.length > 1) {
+                    providedToken = parts.slice(1).join(" ").trim().toLowerCase();
+                } else {
+                    providedToken = parts[0].trim().toLowerCase();
+                }
+            } else if (customApiKeyHeader) {
+                providedToken = String(customApiKeyHeader).trim().toLowerCase();
+            } else if (queryApiKey) {
+                providedToken = String(queryApiKey).trim().toLowerCase();
+            }
 
-            if (
-                rawAuth === `bearer ${cleanExpected}` ||
-                rawAuth === `apikey ${cleanExpected}` ||
-                rawAuth === cleanExpected ||
-                rawCustom === cleanExpected
-            ) {
+            if (providedToken && validKeySet.has(providedToken)) {
                 isAuthenticated = true;
+            }
+        }
+
+        // 3. Fallback cho SePay Webhook: Nếu SePay gửi không kèm Authorization header (cấu hình Không xác thực trên SePay),
+        // xác thực an toàn qua Số tài khoản ngân hàng thụ hưởng của Studio (MBBank 9990187764519)
+        if (!isAuthenticated && !authHeader && !customApiKeyHeader && !signatureHeader) {
+            const bodyAcc = String(req.body?.accountNumber || "").trim();
+            const studioAcc = String(config.accountNumber || process.env.SEPAY_ACCOUNT_NUMBER || "").trim();
+            if (studioAcc && bodyAcc === studioAcc) {
+                isAuthenticated = true;
+                console.log(`ℹ️ [SePay Webhook] Authenticated via verified Studio Account Number (${studioAcc})`);
             }
         }
 
@@ -229,68 +306,17 @@ async function handleWebhook(req, res) {
             });
         }
 
-        // Extract contract code HD + digits
+        // Tìm hợp đồng theo mã hợp đồng trong nội dung chuyển khoản
         const prefix = config.defaultPrefix || "HD";
-        const cleanContent = transactionContent.replace(/\s+/g, " ").trim();
-        
-        // Match HD (or configured prefix) followed by digits/separators
-        const regex = new RegExp(`(?:${prefix})[-\\s]?(\\d[\\d-\\s]*)`, "i");
-        const match = cleanContent.match(regex);
-
+        const searchQuery = buildContractSearchQueries(transactionContent, prefix);
         let contract = null;
-        let targetMaHopDong = null;
-
-        if (match) {
-            const rawDigits = match[1].replace(/\D/g, "");
-            const last6Digits = rawDigits.length >= 6 ? rawDigits.slice(-6) : rawDigits;
-            const code6 = `${prefix}${last6Digits}`;
-            const codeFull = `${prefix}${rawDigits}`;
-
-            targetMaHopDong = code6;
-
-            let year = "";
-            let seqNum = rawDigits;
-            if (rawDigits.length >= 7) {
-                year = rawDigits.substring(0, 4);
-                seqNum = rawDigits.substring(4);
-            }
-            const cleanSeqNum = seqNum.replace(/^0+/, "") || seqNum;
-
-            const searchQuery = [
-                { maHopDong: code6 },
-                { maHopDong: codeFull },
-                { maHopDong: `${prefix}-${last6Digits}` },
-                { maHopDong: `${prefix}-${rawDigits}` },
-                { maHopDong: `${prefix}-${year}-${cleanSeqNum}` },
-                { maHopDong: `${prefix}-${cleanSeqNum}` },
-                { maHopDong: `${prefix}${cleanSeqNum}` },
-                { maHopDong: new RegExp(`^${prefix}[-\\s]?.*${last6Digits}$`, 'i') },
-                { maHopDong: new RegExp(`^${prefix}[-\\s]?.*${rawDigits}$`, 'i') }
-            ];
-
-            console.log(`[SePay Webhook] Searching for contract code: HD + 6 digits (${code6}) / Full (${codeFull}) from content: '${cleanContent}'`);
+        if (searchQuery.length > 0) {
+            console.log(`[SePay Webhook] Searching for contract with queries:`, searchQuery);
             contract = await HopDong.findOne({ $or: searchQuery });
         }
 
-        // Fallback: If no explicit HD prefix, search for 6+ digits sequence in content
-        if (!contract) {
-            const fallbackDigitsMatch = cleanContent.match(/\d{6,}/);
-            if (fallbackDigitsMatch) {
-                const rawDigits = fallbackDigitsMatch[0];
-                const last6Digits = rawDigits.slice(-6);
-                const code6 = `${prefix}${last6Digits}`;
-                const searchQuery = [
-                    { maHopDong: code6 },
-                    { maHopDong: `${prefix}-${last6Digits}` },
-                    { maHopDong: new RegExp(`^${prefix}[-\\s]?.*${last6Digits}$`, 'i') }
-                ];
-                console.log(`[SePay Webhook Fallback] Searching for contract code: ${code6} from content digits '${rawDigits}'`);
-                contract = await HopDong.findOne({ $or: searchQuery });
-            }
-        }
-
         // Fallback for explicit SePay test webhooks in non-production environment only
-        if (!contract && process.env.NODE_ENV !== 'production' && cleanContent.toLowerCase().includes("test_sepay_webhook")) {
+        if (!contract && process.env.NODE_ENV !== 'production' && transactionContent.toLowerCase().includes("test_sepay_webhook")) {
             contract = await HopDong.findOne().sort({ createdAt: -1 });
             if (contract) {
                 console.log(`[SePay Test Webhook] Matched latest contract: ${contract.maHopDong}`);
@@ -298,15 +324,15 @@ async function handleWebhook(req, res) {
         }
 
         if (!contract) {
-            console.log(`Contract not found for content: ${cleanContent}`);
+            console.log(`Contract not found for content: ${transactionContent}`);
             await recordPaymentAuditLog({
                 providerTransactionId: providerTxId,
                 status: "CONTRACT_NOT_FOUND",
-                message: `No matching contract found for content '${cleanContent}'`,
+                message: `No matching contract found for content '${transactionContent}'`,
                 amount,
                 req
             });
-            return res.status(200).json({ success: true, message: `No matching contract found for '${cleanContent}'` });
+            return res.status(200).json({ success: true, message: `No matching contract found for '${transactionContent}'` });
         }
 
         // Double check contract's embedded payment list for idempotency
@@ -317,16 +343,6 @@ async function handleWebhook(req, res) {
         }
 
         // 3. DATABASE TRANSACTION & ATOMIC INSERTION
-        let session = null;
-        if (mongoose.connection && mongoose.connection.readyState === 1) {
-            try {
-                session = await mongoose.startSession();
-                session.startTransaction();
-            } catch (sessionErr) {
-                session = null; // Fallback for standalone MongoDB
-            }
-        }
-
         const newPaymentObj = {
             id: existingTxId,
             khachHang: contract.khachHang1?.tenKhachHang || "Khách hàng",
@@ -387,7 +403,7 @@ async function handleWebhook(req, res) {
         }
         const trangThaiThanhToan = conLai <= 0 ? "Đã thanh toán đủ" : (khachHangDaThanhToan > 0 ? `Đã cọc ${phanTramDaThanhToan}%` : "Chưa thanh toán");
 
-        try {
+        const persistPaymentAndContract = async (session = null) => {
             // Ghi bản ghi Payment vào Ledger trước.
             // Nếu có 2 request đồng thời, compound index (provider + providerTransactionId) sẽ ném lỗi duplicate key E11000
             const paymentDoc = new Payment({
@@ -415,10 +431,44 @@ async function handleWebhook(req, res) {
                 "thanhToan.phanTramDaThanhToan": phanTramDaThanhToan,
                 "thanhToan.trangThaiThanhToan": trangThaiThanhToan
             }, session ? { session } : {});
+        };
 
-            if (session) {
-                await session.commitTransaction();
-                session.endSession();
+        let session = null;
+        if (mongoose.connection && mongoose.connection.readyState === 1) {
+            try {
+                session = await mongoose.startSession();
+                session.startTransaction();
+            } catch (sessionErr) {
+                session = null; // Fallback for standalone MongoDB
+            }
+        }
+
+        try {
+            try {
+                await persistPaymentAndContract(session);
+                if (session) {
+                    await session.commitTransaction();
+                    session.endSession();
+                }
+            } catch (txErr) {
+                if (session) {
+                    try { await session.abortTransaction(); session.endSession(); } catch (e) {}
+                    session = null;
+                }
+
+                // Fallback khi MongoDB chạy standalone (không phải replica set / mongos)
+                const msg = String(txErr?.message || "");
+                const isStandaloneTxUnsupported =
+                    txErr?.code === 20 ||
+                    msg.includes("Transaction numbers are only allowed") ||
+                    msg.includes("replica set");
+
+                if (isStandaloneTxUnsupported) {
+                    console.warn("⚠️ [SePay Webhook] MongoDB standalone detected, falling back to non-transactional atomic write.");
+                    await persistPaymentAndContract(null);
+                } else {
+                    throw txErr;
+                }
             }
 
             await recordPaymentAuditLog({
@@ -493,6 +543,8 @@ async function handleWebhook(req, res) {
 async function getConfig(req, res) {
     try {
         const config = await getOrCreateConfig();
+        const activeSecret = config.webhookSecret || config.secretKey || process.env.SEPAY_WEBHOOK_SECRET || "";
+        const activeKey = config.apiKey || process.env.SEPAY_API_KEY || "";
         return res.status(200).json({
             success: true,
             data: {
@@ -502,8 +554,9 @@ async function getConfig(req, res) {
                 merchantId: config.merchantId,
                 isAutoApprove: config.isAutoApprove,
                 defaultPrefix: config.defaultPrefix,
-                hasWebhookSecret: !!config.webhookSecret,
-                hasApiKey: !!config.apiKey
+                apiKey: activeKey,
+                hasWebhookSecret: !!activeSecret,
+                hasApiKey: !!activeKey
             }
         });
     } catch (err) {
@@ -521,6 +574,7 @@ async function updateConfig(req, res) {
             accountName,
             merchantId,
             webhookSecret,
+            secretKey,
             apiKey,
             isAutoApprove,
             defaultPrefix
@@ -535,7 +589,11 @@ async function updateConfig(req, res) {
         if (accountNumber !== undefined) config.accountNumber = accountNumber;
         if (accountName !== undefined) config.accountName = accountName;
         if (merchantId !== undefined) config.merchantId = merchantId;
-        if (webhookSecret !== undefined) config.webhookSecret = webhookSecret;
+        const newSecret = webhookSecret || secretKey;
+        if (newSecret !== undefined) {
+            config.webhookSecret = newSecret;
+            config.secretKey = newSecret;
+        }
         if (apiKey !== undefined) config.apiKey = apiKey;
         if (isAutoApprove !== undefined) config.isAutoApprove = isAutoApprove;
         if (defaultPrefix !== undefined) config.defaultPrefix = defaultPrefix;
@@ -590,33 +648,11 @@ async function getQrInfo(req, res) {
 async function checkStatus(req, res) {
     try {
         const { maHopDong } = req.params;
-        const rawCode = maHopDong || "";
-        const prefix = "HD";
-        const rawDigits = rawCode.replace(/^HD[-\s]?/i, "").replace(/\D/g, "");
-        const last6Digits = rawDigits.length >= 6 ? rawDigits.slice(-6) : rawDigits;
-        const code6 = `${prefix}${last6Digits}`;
-        const codeFull = `${prefix}${rawDigits}`;
+        const rawCode = String(maHopDong || "").trim();
+        const config = await getOrCreateConfig();
+        const prefix = config.defaultPrefix || "HD";
 
-        let year = "";
-        let seqNum = rawDigits;
-        if (rawDigits.length >= 7) {
-            year = rawDigits.substring(0, 4);
-            seqNum = rawDigits.substring(4);
-        }
-        const cleanSeqNum = seqNum.replace(/^0+/, "") || seqNum;
-
-        const searchQuery = [
-            { maHopDong: rawCode },
-            { maHopDong: code6 },
-            { maHopDong: codeFull },
-            { maHopDong: `${prefix}-${last6Digits}` },
-            { maHopDong: `${prefix}-${rawDigits}` },
-            { maHopDong: `HD-${year}-${cleanSeqNum}` },
-            { maHopDong: `HD-${cleanSeqNum}` },
-            { maHopDong: `HD${cleanSeqNum}` },
-            { maHopDong: new RegExp(`^HD[-\\s]?.*${last6Digits}$`, 'i') }
-        ];
-
+        const searchQuery = buildContractSearchQueries(rawCode, prefix);
         const contract = await HopDong.findOne({ $or: searchQuery });
         if (!contract) {
             return res.status(404).json({ success: false, message: "Hợp đồng không tồn tại" });

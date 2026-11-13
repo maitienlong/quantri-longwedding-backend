@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const paymentSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true },
     provider: { type: String, default: "SEPAY", index: true },
-    providerTransactionId: { type: String, required: true, index: true },
+    providerTransactionId: { type: String, required: true, index: true, default: function() { return this.id; } },
     khachHang: { type: String, required: true },
     amount: { type: Number, required: true },
     date: { type: Date, required: true },

@@ -164,33 +164,171 @@ async function remove(req, res) {
     }
 }
 
+function decodeHtmlEntities(str) {
+    if (!str) return "";
+    return str
+        .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(dec))
+        .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#039;/g, "'");
+}
+
 async function getFacebookInfo(req, res) {
     const { url } = req.body;
     if (!url) return error(res, "Thiếu URL Facebook");
+    const cleanInput = String(url).trim();
+
     try {
-        const formData = new URLSearchParams();
-        formData.append('link', url);
+        // 1. Nếu người dùng nhập trực tiếp ID dạng số (UID)
+        if (/^\d{3,25}$/.test(cleanInput)) {
+            let name = "";
+            try {
+                const fbRes = await fetch(`https://www.facebook.com/profile.php?id=${cleanInput}`, {
+                    headers: {
+                        'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+                        'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                    },
+                    redirect: 'follow'
+                });
+                const html = await fbRes.text();
+                const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/i) ||
+                                   html.match(/<meta name="title" content="([^"]+)"/i) ||
+                                   html.match(/<title>([^<]+)<\/title>/i);
+                if (titleMatch && titleMatch[1]) {
+                    const rawName = decodeHtmlEntities(titleMatch[1])
+                        .replace(/\s*\|\s*Facebook$/i, '')
+                        .replace(/\s*-\s*Facebook$/i, '')
+                        .replace(/\s*\|\s*Trang cá nhân.*$/i, '')
+                        .trim();
+                    if (rawName && !rawName.toLowerCase().includes('đăng nhập') && !rawName.toLowerCase().includes('log in') && rawName.toLowerCase() !== 'facebook') {
+                        name = rawName;
+                    }
+                }
+            } catch (_) {}
 
-        const response = await fetch('https://id.traodoisub.com/api.php', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: formData.toString()
-        });
-
-        const json = await response.json();
-        
-        if (json && json.success === 200 && json.id) {
             return success(res, "Lấy thông tin Facebook thành công!", { 
-                name: json.name || "",
-                uid: json.id
+                uid: cleanInput,
+                name: name || ""
+            });
+        }
+
+        // 2. Chuẩn hóa URL Facebook
+        let targetUrl = cleanInput;
+        if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+            targetUrl = 'https://' + targetUrl;
+        }
+
+        let parsedUrl;
+        try {
+            parsedUrl = new URL(targetUrl);
+            if (parsedUrl.hostname.includes('m.facebook.com') || parsedUrl.hostname.includes('mobile.facebook.com')) {
+                parsedUrl.hostname = 'www.facebook.com';
+            }
+        } catch (_) {
+            return error(res, "Đường dẫn Facebook không hợp lệ");
+        }
+
+        let fbUid = null;
+        let fbName = "";
+
+        // Kiểm tra query param ?id=12345 (trường hợp profile.php?id=...)
+        if (parsedUrl.searchParams.has('id')) {
+            const idVal = parsedUrl.searchParams.get('id');
+            if (/^\d+$/.test(idVal)) {
+                fbUid = idVal;
+            }
+        }
+
+        // 3. Phương pháp chính: Crawler trực tiếp từ Facebook OpenGraph
+        try {
+            const fbRes = await fetch(parsedUrl.toString(), {
+                headers: {
+                    'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+                    'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                },
+                redirect: 'follow'
+            });
+
+            const html = await fbRes.text();
+
+            if (!fbUid) {
+                const uidMatch = html.match(/fb:\/\/profile\/(\d+)/i) || 
+                                 html.match(/fb:\/\/page\/\?id=(\d+)/i) ||
+                                 html.match(/content="fb:\/\/profile\/(\d+)"/i) ||
+                                 html.match(/"userID":"(\d+)"/i) ||
+                                 html.match(/"entity_id":"(\d+)"/i) ||
+                                 html.match(/"target_id":(\d+)/i) ||
+                                 html.match(/"identifier":(\d+)/i) ||
+                                 html.match(/al:android:url"[^>]+content="[^"]*\/(\d+)/i) ||
+                                 html.match(/al:ios:url"[^>]+content="[^"]*\/(\d+)/i) ||
+                                 html.match(/"user":\{"id":"(\d+)"/i);
+                if (uidMatch && uidMatch[1]) {
+                    fbUid = uidMatch[1];
+                }
+            }
+
+            const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/i) ||
+                               html.match(/<meta name="title" content="([^"]+)"/i) ||
+                               html.match(/<title>([^<]+)<\/title>/i);
+            if (titleMatch && titleMatch[1]) {
+                const rawName = decodeHtmlEntities(titleMatch[1])
+                    .replace(/\s*\|\s*Facebook$/i, '')
+                    .replace(/\s*-\s*Facebook$/i, '')
+                    .replace(/\s*\|\s*Trang cá nhân.*$/i, '')
+                    .trim();
+                if (rawName && !rawName.toLowerCase().includes('đăng nhập') && !rawName.toLowerCase().includes('log in') && rawName.toLowerCase() !== 'facebook') {
+                    fbName = rawName;
+                }
+            }
+        } catch (e) {
+            console.warn("Direct FB fetch warning:", e.message);
+        }
+
+        // 4. Fallback 1: Thử lookup-id nếu chưa có numeric UID
+        if (!fbUid) {
+            try {
+                const form2 = new URLSearchParams();
+                form2.append('fburl', parsedUrl.toString());
+                form2.append('check', 'Lookup');
+                const res2 = await fetch('https://lookup-id.com/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+                    },
+                    body: form2.toString()
+                });
+                const text2 = await res2.text();
+                const match = text2.match(/id="code"[^>]*>(\d+)</i) || text2.match(/Your Facebook ID is: (\d+)/i);
+                if (match && match[1]) {
+                    fbUid = match[1];
+                }
+            } catch (_) {}
+        }
+
+        // 5. Fallback 2: Lấy username từ đường dẫn nếu không có số UID
+        if (!fbUid) {
+            const pathParts = parsedUrl.pathname.split('/').filter(p => Boolean(p) && p !== 'profile.php' && p !== 'people' && p !== 'share');
+            if (pathParts.length > 0) {
+                fbUid = pathParts[0];
+            }
+        }
+
+        if (fbUid || fbName) {
+            return success(res, "Lấy thông tin Facebook thành công!", { 
+                uid: fbUid || cleanInput,
+                name: fbName || ""
             });
         }
         
-        return error(res, "Không tìm thấy thông tin Facebook");
+        return error(res, "Không tìm thấy thông tin Facebook từ đường dẫn này");
     } catch (err) {
-        return error(res, err.message);
+        return error(res, err.message || "Lỗi lấy thông tin Facebook");
     }
 }
 
